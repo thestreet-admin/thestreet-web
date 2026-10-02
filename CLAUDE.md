@@ -33,7 +33,10 @@ URL công khai: `https://thestreet-admin.github.io/thestreet-web/admin/admin.js`
 ## API (Apps Script) — các action
 Trang thi: `GET` (danh sách đợt thi đang mở), `start`, `submit`.
 Quản trị (cần `token` từ `admin.login {username, password}`; tên `admin` hoặc để trống = quản trị chính): `admin.bootstrap` (trả kèm `me` = người đang đăng nhập), `admin.bank.list|save|toggle|delete`, `admin.periods.save|delete`,
-`admin.results.list|get|grade|reset`, `admin.reports.stats|export|pdf`, `admin.accounts.list|save|delete`, `admin.account.password`, `admin.log.list`, `admin.logout`.
+`admin.results.list|get|grade|reset|release`, `admin.bank.import`, `admin.reports.stats|export|pdf`, `admin.accounts.list|save|delete`, `admin.account.password`, `admin.log.list`, `admin.logout`.
+- `admin.results.list {voided: true}` = bài đã hủy khi cho thi lại (mã `huy:…`, chỉ xem/PDF). `admin.results.reset` gửi kèm `reason`.
+- `admin.results.get` trả `guides` (đáp án mẫu theo mã câu tự luận), `version`, `editing` (người khác đang mở bài). `admin.results.grade` gửi `expectVersion`; lỗi `CONFLICT` → hỏi người dùng, đồng ý thì gửi lại với `force: true`. Đóng modal chấm → `admin.results.release`.
+- Nhập Excel ngân hàng đề đọc file ở trình duyệt (thư viện xlsx từ CDN; file .csv đọc dạng chữ UTF-8), kiểm tra từng dòng, có lỗi thì không gửi. Kiểm thử chạy offline: đặt `XLSX_LOCAL=<đường dẫn xlsx.full.min.js>`.
 Người chấm gọi chức năng khác sẽ nhận lỗi `FORBIDDEN` → giao diện ẩn luôn các tab/nút đó (`isMgr()`). Tên người chấm: tài khoản riêng lấy theo tài khoản, chỉ quản trị chính mới gõ tay (`isMaster()`).
 Các thao tác ngân hàng đề trả kèm `bank` + `bankIssues` để không phải gọi lại `admin.bootstrap`.
 Khi thêm action mới: sửa cả repo `thestreet-appscript` và bổ sung giả lập trong `tests/ui_test.py`.

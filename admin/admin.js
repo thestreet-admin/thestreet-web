@@ -46,6 +46,7 @@
   let stats = null, statsFor = null;
   let qFilter = { position: "", showAll: false };
   let results = null, resultsFor = null;
+  let voids = null, voidsFor = null;   // bài đã hủy khi cho thi lại
   let rFilter = { position: "", status: "", q: "" };
   let bank = null;
   let bFilter = { position: "", type: "", status: "", q: "" };
@@ -131,7 +132,9 @@
     } finally { setBusy(false); }
     if (!data || data.result !== "success") {
       if (data && data.code === "AUTH") { logout(true); }
-      throw new Error((data && data.error) || "Máy chủ trả về lỗi không xác định.");
+      const err = new Error((data && data.error) || "Máy chủ trả về lỗi không xác định.");
+      err.code = data && data.code; err.data = data;
+      throw err;
     }
     return data;
   }
@@ -176,8 +179,14 @@
     document.body.style.overflow = "hidden";
     return modalEl;
   }
+  let onModalClose = null;   // việc cần làm khi đóng modal (vd: báo server thôi mở bài để chấm)
   function closeModal() {
     if (modalEl) { modalEl.remove(); modalEl = null; document.body.style.overflow = ""; }
+    if (onModalClose) { const f = onModalClose; onModalClose = null; f(); }
+  }
+  // Gọi API không chờ kết quả, không hiện vòng xoay (dùng cho việc dọn dẹp)
+  function fireAndForget(action, params) {
+    fetch(API_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(Object.assign({ action, token }, params || {})) }).catch(() => {});
   }
   document.addEventListener("keydown", e => { if (e.key === "Escape" && modalEl) closeModal(); });
 
@@ -395,15 +404,21 @@
     main.innerHTML = `<div class="card">
       <div class="bar">${periodSelectHTML("rsp")}
         <select id="rpos"><option value="">Mọi vị trí</option>${posOpts}</select>
-        <select id="rst"><option value="">Mọi trạng thái</option><option value="pending"${rFilter.status === "pending" ? " selected" : ""}>Chờ chấm</option><option value="graded"${rFilter.status === "graded" ? " selected" : ""}>Đã chấm</option><option value="pass"${rFilter.status === "pass" ? " selected" : ""}>Đạt</option><option value="fail"${rFilter.status === "fail" ? " selected" : ""}>Không đạt</option></select>
+        <select id="rst"><option value="">Mọi trạng thái</option><option value="pending"${rFilter.status === "pending" ? " selected" : ""}>Chờ chấm</option><option value="graded"${rFilter.status === "graded" ? " selected" : ""}>Đã chấm</option><option value="pass"${rFilter.status === "pass" ? " selected" : ""}>Đạt</option><option value="fail"${rFilter.status === "fail" ? " selected" : ""}>Không đạt</option><option value="voided"${rFilter.status === "voided" ? " selected" : ""}>🗑 Bài đã hủy (cho thi lại)</option></select>
         <input type="text" id="rq" placeholder="Tìm tên hoặc mã NV..." value="${esc(rFilter.q)}">
       </div>
       <div id="rlist"><div class="empty">⏳ Đang tải danh sách bài thi...</div></div></div>`;
-    bindPeriodSelect("rsp", () => { results = null; renderResults(); });
+    bindPeriodSelect("rsp", () => { results = voids = null; renderResults(); });
     $("#rpos").onchange = e => { rFilter.position = e.target.value; drawResults(); };
-    $("#rst").onchange = e => { rFilter.status = e.target.value; drawResults(); };
+    $("#rst").onchange = e => { const was = rFilter.status === "voided"; rFilter.status = e.target.value; if (was !== (rFilter.status === "voided")) renderResults(); else drawResults(); };
     $("#rq").oninput = e => { rFilter.q = e.target.value; drawResults(); };
-    if (!results || resultsFor !== period) {
+    if (rFilter.status === "voided") {
+      if (!voids || voidsFor !== period) {
+        const d = await run(() => api("admin.results.list", { period, voided: true }));
+        if (!d) return;
+        voids = d.results; voidsFor = period;
+      }
+    } else if (!results || resultsFor !== period) {
       const d = await run(() => api("admin.results.list", { period }));
       if (!d) return;
       results = d.results; resultsFor = period;
@@ -414,6 +429,8 @@
 
   function filteredResults() {
     const q = norm(rFilter.q.trim());
+    if (rFilter.status === "voided") return (voids || []).filter(r =>
+      (!rFilter.position || r.position === rFilter.position) && (!q || norm(r.name).includes(q) || norm(r.empId).includes(q)));
     return (results || []).filter(r =>
       (!rFilter.position || r.position === rFilter.position) &&
       (!rFilter.status || (rFilter.status === "pending" && !r.graded) || (rFilter.status === "graded" && r.graded) ||
@@ -425,23 +442,25 @@
     const list = filteredResults();
     const el = $("#rlist");
     if (!el) return;
-    if (!list.length) { el.innerHTML = '<div class="empty">Không có bài thi nào khớp bộ lọc.</div>'; return; }
-    el.innerHTML = `<p class="muted" style="margin:0 0 8px">${list.length} bài thi · ${list.filter(r => !r.graded).length} chờ chấm. Bấm vào một dòng để xem và chấm.</p>
+    if (!list.length) { el.innerHTML = `<div class="empty">${rFilter.status === "voided" ? "Chưa có bài nào bị hủy để thi lại." : "Không có bài thi nào khớp bộ lọc."}</div>`; return; }
+    el.innerHTML = `<p class="muted" style="margin:0 0 8px">${rFilter.status === "voided"
+        ? list.length + " bài đã hủy khi cho thi lại. Bài đã hủy chỉ để tra cứu, không tính vào thống kê."
+        : list.length + " bài thi · " + list.filter(r => !r.graded).length + " chờ chấm. Bấm vào một dòng để xem và chấm."}</p>
       <div class="tbl-wrap"><table>
       <thead><tr><th>Thời gian nộp</th><th>Họ và tên</th><th>Mã NV</th><th>Vị trí</th><th>Kỳ thi</th><th class="num">Trắc nghiệm</th><th class="num">Tự luận</th><th class="num">Tổng</th><th>Kết quả</th><th></th></tr></thead>
       <tbody>${list.map(r => `<tr class="click" data-key="${esc(r.key)}">
-        <td style="white-space:nowrap">${fmtDate(r.time)}</td><td><b>${esc(r.name)}</b>${r.sys ? `<div class="muted" style="color:var(--red)">${esc(r.sys)}</div>` : ""}</td>
+        <td style="white-space:nowrap">${fmtDate(r.time)}</td><td><b>${esc(r.name)}</b>${r.sys ? `<div class="muted" style="color:var(--red)">${esc(r.sys)}</div>` : ""}${r.voided ? `<div class="muted">Hủy ${fmtDate(r.voidedAt)} bởi ${esc(r.voidedBy)}${r.voidReason ? " · " + esc(r.voidReason) : ""}</div>` : ""}</td>
         <td>${esc(r.empId)}</td><td>${esc(r.position)}</td><td>${esc(r.period)}</td>
         <td class="num">${fmtNum(r.mcqScore)}/${fmtNum(r.mcqMax)}</td>
         <td class="num">${r.graded ? fmtNum(r.essayScore) + "/" + fmtNum(r.essayMax) : "—"}</td>
         <td class="num">${r.graded ? `<b>${fmtNum(r.total)}</b>/${fmtNum(r.max)}` : "—"}</td>
-        <td>${resultBadge(r)}</td>
-        <td><button class="btn sm ${r.graded ? "" : "pri"}">${r.graded ? "Xem" : "Chấm"}</button></td></tr>`).join("")}</tbody></table></div>`;
+        <td>${r.voided ? '<span class="badge b-gray">🗑 Đã hủy</span>' : resultBadge(r)}</td>
+        <td><button class="btn sm ${r.graded || r.voided ? "" : "pri"}">${r.graded || r.voided ? "Xem" : "Chấm"}</button></td></tr>`).join("")}</tbody></table></div>`;
     $$("tr[data-key]", el).forEach(tr => tr.onclick = () => openResult(tr.dataset.key));
   }
 
   async function openResult(key) {
-    const summary = (results || []).find(r => r.key === key);
+    const summary = (results || []).concat(voids || []).find(r => r.key === key);
     const d = await run(() => api("admin.results.get", { key, empId: summary ? summary.empId : undefined }));
     if (!d) return;
     showResultModal(d.item);
@@ -451,6 +470,9 @@
     const data = it.data;
     const essays = data ? data.essay : [{ q: "Tự luận (bài thi phiên bản cũ — chấm tổng điểm tự luận)", points: 10, answer: it.essaysText.filter(Boolean).join("\n\n———\n\n") || "(không có dữ liệu)" }];
     const scores = Array.isArray(it.essayScores) ? it.essayScores.slice() : (it.graded && !data ? [it.essayScore] : essays.map(() => null));
+    const guides = it.guides || {};
+    const ro = !!it.voided;            // bài đã hủy: chỉ xem
+    let version = it.version;          // thời gian chấm gần nhất lúc mở bài — để phát hiện người khác vừa chấm
     const grader = it.grader || lsGet("ts_admin_grader") || "";
     // Tài khoản riêng: người chấm là chủ tài khoản. Quản trị chính (dùng chung) gõ tên người chấm.
     const graderField = isMaster()
@@ -471,9 +493,10 @@
         <div class="muted">Câu tự luận ${i + 1}${q.id ? " · " + esc(q.id) : ""} · tối đa ${q.points} điểm</div>
         <div class="q">${esc(q.q)}</div>
         <div class="a">${esc(q.answer || "(Thí sinh bỏ trống)")}</div>
+        ${q.id && guides[q.id] ? `<details class="guide" open><summary>📋 Đáp án mẫu / hướng dẫn chấm</summary><div>${esc(guides[q.id])}</div></details>` : ""}
         <div class="score-row"><span class="muted">Điểm:</span>
-          ${steps.map(v => `<button type="button" class="qs" data-v="${v}">${fmtNum(v)}</button>`).join("")}
-          <input type="number" class="sc" min="0" max="${q.points}" step="0.25" value="${scores[i] === null || scores[i] === undefined ? "" : scores[i]}" aria-label="Điểm câu ${i + 1}"> / ${q.points}
+          ${steps.map(v => `<button type="button" class="qs" data-v="${v}"${ro ? " disabled" : ""}>${fmtNum(v)}</button>`).join("")}
+          <input type="number" class="sc" min="0" max="${q.points}" step="0.25" value="${scores[i] === null || scores[i] === undefined ? "" : scores[i]}" aria-label="Điểm câu ${i + 1}"${ro ? " disabled" : ""}> / ${q.points}
         </div></div>`;
     }).join("");
 
@@ -484,24 +507,29 @@
         <div><div class="l">Vị trí · Kỳ thi</div><div class="v">${esc(it.position)} · ${esc(it.period)}</div></div>
         <div><div class="l">Nộp lúc</div><div class="v">${fmtDate(it.time)}</div></div>
       </div>
+      ${it.voided ? `<div class="sumbox" style="background:#eef0ee;color:#444">🗑 Bài này đã bị hủy để nhân viên thi lại: ${fmtDate(it.voidedAt)} bởi <b>${esc(it.voidedBy)}</b>${it.voidReason ? ". Lý do: " + esc(it.voidReason) : ""}. Chỉ xem, không chấm được.</div>` : ""}
+      ${it.editing ? `<div class="sumbox warnbox">⚠️ <b>${esc(it.editing.name)}</b> đang mở bài này để chấm (từ ${fmtDate(it.editing.since)}). Nên chờ họ chấm xong để tránh hai người chấm cùng một bài.</div>` : ""}
       ${it.sys ? `<div class="sumbox" style="background:var(--redl);color:var(--red)">⚠️ ${esc(it.sys)}</div>` : ""}
       <details${data ? "" : " open"}><summary>Phần trắc nghiệm: ${fmtNum(it.mcqScore)}/${fmtNum(it.mcqMax)} điểm (${esc(it.correct)} câu đúng) — bấm để xem chi tiết</summary>${mcqHTML}</details>
       <h4 style="margin:14px 0 10px;color:#e67e22">Phần tự luận</h4>
       ${essayHTML}
       <div class="sumbox" id="sumbox"></div>
       <div class="row2">
-        <div class="field"><label>Người chấm *</label>${graderField}</div>
+        <div class="field"><label>Người chấm${ro ? "" : " *"}</label>${ro ? `<div style="padding-top:6px">${esc(it.grader || "—")}</div>` : graderField}</div>
         <div class="field"><label>Kết quả hiện tại</label><div style="padding-top:6px">${resultBadge(it)}${it.gradedAt ? ` <span class="muted">chấm lúc ${fmtDate(it.gradedAt)} bởi ${esc(it.grader)}</span>` : ""}</div></div>
       </div>
-      <div class="field"><label>Nhận xét</label><textarea id="gnote" placeholder="Nhận xét chi tiết cho nhân viên...">${esc(it.note)}</textarea></div>`;
+      <div class="field"><label>Nhận xét</label><textarea id="gnote" placeholder="Nhận xét chi tiết cho nhân viên..."${ro ? " disabled" : ""}>${esc(it.note)}</textarea></div>`;
 
-    const footer = `
+    const footer = ro ? `<button class="btn" id="gpdf">⬇ Phiếu điểm PDF</button><button class="btn" data-close>Đóng</button>` : `
       ${isMgr() ? '<button class="btn danger" id="greset" style="margin-right:auto">Cho thi lại</button>' : '<span style="margin-right:auto"></span>'}
       <button class="btn" id="gpdf">⬇ Phiếu điểm PDF</button>
       <button class="btn" id="gsave">Lưu điểm</button>
       <button class="btn pri" id="gnext">Lưu & bài chờ chấm tiếp →</button>`;
 
-    const m = openModal("Bài thi: " + esc(it.name), body, footer, true);
+    const m = openModal((ro ? "Bài đã hủy: " : "Bài thi: ") + esc(it.name), body, footer, true);
+    $("#gpdf", m).onclick = () => downloadPdf(it);
+    if (ro) return;
+    onModalClose = () => fireAndForget("admin.results.release", { key: it.key });
 
     function readScores() {
       return $$(".essay", m).map(el => { const v = $(".sc", el).value.trim(); return v === "" ? null : Number(v); });
@@ -534,8 +562,17 @@
         if (sc[i] === null || isNaN(sc[i]) || sc[i] < 0 || sc[i] > essays[i].points) { toast(`Điểm câu tự luận ${i + 1} phải từ 0 đến ${essays[i].points}.`, true); return; }
       }
       if (isMaster()) lsSet("ts_admin_grader", gname);
-      const d = await run(() => api("admin.results.grade", { key: it.key, empId: it.empId, essayScores: sc, grader: gname, note: $("#gnote", m).value }));
-      if (!d) return;
+      const payload = { key: it.key, empId: it.empId, essayScores: sc, grader: gname, note: $("#gnote", m).value, expectVersion: version };
+      let d;
+      try { d = await api("admin.results.grade", payload); }
+      catch (e) {
+        if (e.code !== "CONFLICT") { toast(e.message, true); return; }
+        // Người khác vừa chấm bài này: hỏi trước khi ghi đè
+        if (!confirm(e.message + "\n\nBấm OK để vẫn lưu điểm của bạn (ghi đè điểm của họ).\nBấm Hủy để tải lại bài và xem điểm mới.")) { openResult(it.key); return; }
+        try { d = await api("admin.results.grade", Object.assign(payload, { force: true })); }
+        catch (e2) { toast(e2.message, true); return; }
+      }
+      version = d.summary.gradedAt;
       const idx = (results || []).findIndex(r => r.key === it.key);
       const wasPending = !it.graded;
       if (idx >= 0) results[idx] = d.summary;
@@ -555,16 +592,17 @@
     }
     $("#gsave", m).onclick = () => save(false);
     $("#gnext", m).onclick = () => save(true);
-    $("#gpdf", m).onclick = () => downloadPdf(it);
     if ($("#greset", m)) $("#greset", m).onclick = async () => {
-      if (!confirm(`Cho ${it.name} (${it.empId}) thi lại?\n\nBài thi này sẽ bị xóa khỏi danh sách để nhân viên làm bài mới. Điểm và kết quả cũ được lưu lại trong Nhật ký. Nên tải phiếu điểm PDF trước nếu cần bản đầy đủ.`)) return;
-      const d = await run(() => api("admin.results.reset", { key: it.key, empId: it.empId }));
+      const reason = prompt(`Cho ${it.name} (${it.empId}) thi lại?\n\nBài này được chuyển sang mục "Bài đã hủy" (vẫn xem và tải PDF được), nhân viên sẽ làm bài mới.\n\nLý do (không bắt buộc), rồi bấm OK:`, "");
+      if (reason === null) return;
+      const d = await run(() => api("admin.results.reset", { key: it.key, empId: it.empId, reason }));
       if (!d) return;
       results = (results || []).filter(r => r.key !== it.key);
+      voids = null;
       if (!it.graded && boot.pending) boot.pending--;
       stats = null;
       closeModal();
-      toast("Đã xóa bài thi. " + it.name + " có thể vào thi lại.");
+      toast("Đã chuyển bài cũ sang mục Bài đã hủy. " + it.name + " có thể vào thi lại.");
       renderShell();
     };
   }
@@ -583,7 +621,10 @@
     main.innerHTML = `
       <div id="bmeta">${bankMetaHTML()}</div>
       <div class="card">
-        <div class="card-h"><h3>Ngân hàng đề</h3><button class="btn pri" id="bnew">+ Thêm câu hỏi</button></div>
+        <div class="card-h"><h3>Ngân hàng đề</h3><div class="bar" style="margin:0">
+          <button class="btn" id="bexp">⬇ Xuất Excel</button>
+          <button class="btn" id="bimp">⬆ Nhập Excel</button><input type="file" id="bfile" accept=".xlsx,.xls,.csv" style="display:none">
+          <button class="btn pri" id="bnew">+ Thêm câu hỏi</button></div></div>
         <p class="muted" style="margin:-4px 0 12px">Mỗi lượt thi, hệ thống rút ngẫu nhiên số câu trắc nghiệm và tự luận đang dùng của vị trí đó theo cài đặt của đợt thi (mặc định ${boot.config.mcqCount} TN + ${boot.config.essayCount} TL; các đợt chưa đóng hiện cần tối đa ${need.mcqCount} TN + ${need.essayCount} TL). Kho càng nhiều câu, đề giữa các nhân viên càng khác nhau.</p>
         <div class="bar">
           <select id="bpos"><option value="">Mọi vị trí</option>${boot.positions.map(p => `<option value="${p.id}"${bFilter.position === p.id ? " selected" : ""}>${esc(p.label)}</option>`).join("")}</select>
@@ -594,6 +635,9 @@
         <div id="blist"><div class="empty">⏳ Đang tải ngân hàng đề...</div></div>
       </div>`;
     $("#bnew").onclick = () => editQuestion(null);
+    $("#bexp").onclick = exportBank;
+    $("#bimp").onclick = () => { $("#bfile").value = ""; $("#bfile").click(); };
+    $("#bfile").onchange = e => { const f = e.target.files && e.target.files[0]; if (f) importBank(f); };
     $("#bpos").onchange = e => { bFilter.position = e.target.value; drawBank(); };
     $("#btype").onchange = e => { bFilter.type = e.target.value; drawBank(); };
     $("#bst").onchange = e => { bFilter.status = e.target.value; drawBank(); };
@@ -630,7 +674,7 @@
       <tbody>${list.map(x => `<tr data-id="${esc(x.id)}" style="${x._pending ? "background:#fffbea" : (x.active ? "" : "opacity:.6")}">
         <td style="white-space:nowrap">${x._pending && !x._hasId ? '<span class="muted">(chờ mã)</span>' : esc(x.id)}</td><td>${esc(x.positionLabel)}</td>
         <td>${x.type === "TN" ? '<span class="badge b-ok">TN</span>' : '<span class="badge b-wait">TL</span>'}</td>
-        <td><div class="clip" title="${esc(x.q)}">${esc(x.q)}</div></td>
+        <td><div class="clip" title="${esc(x.q)}">${esc(x.q)}</div>${x.guide ? '<div class="muted" title="' + esc(x.guide) + '">📋 Có đáp án mẫu</div>' : ""}</td>
         <td>${x.type === "TN" ? (x.answer === null ? '<span class="badge b-bad">Thiếu</span>' : `<span title="${esc(x.options[x.answer])}"><b>${LABELS[x.answer]}</b></span>`) : "—"}</td>
         <td class="num">${fmtNum(x.points)}</td>
         <td>${x._pending ? '<span class="badge b-wait">⏳ Đang lưu...</span>' : (x.active ? '<span class="badge b-ok">Đang dùng</span>' : '<span class="badge b-gray">Tạm ẩn</span>')}</td>
@@ -686,7 +730,7 @@
   let tmpSeq = 0;
 
   function editQuestion(item, draft) {
-    const x = draft || item || { positionId: bFilter.position || boot.positions[0].id, type: bFilter.type || "TN", q: "", options: ["", "", "", ""], answer: null, points: (bFilter.type === "TL" ? 2 : 3), active: true };
+    const x = draft || item || { positionId: bFilter.position || boot.positions[0].id, type: bFilter.type || "TN", q: "", options: ["", "", "", ""], answer: null, points: (bFilter.type === "TL" ? 2 : 3), active: true, guide: "" };
     const body = `
       <div class="row2">
         <div class="field"><label>Vị trí *</label><select id="qpos2">${boot.positions.map(p => `<option value="${p.id}"${p.id === x.positionId ? " selected" : ""}>${esc(p.label)}</option>`).join("")}</select></div>
@@ -701,6 +745,8 @@
         <div class="field"><label>Điểm *</label><input type="number" id="qpts" min="0.5" step="0.5" value="${x.points}"></div>
         <div class="field"><label>Trạng thái</label><select id="qact"><option value="1"${x.active ? " selected" : ""}>Đang dùng</option><option value="0"${x.active ? "" : " selected"}>Tạm ẩn</option></select></div>
       </div>
+      <div class="field"><label id="qguide-l">Đáp án mẫu / hướng dẫn chấm <span class="muted">(chỉ người chấm thấy, nhân viên đi thi không thấy)</span></label>
+        <textarea id="qguide" rows="3" placeholder="VD: - Chào khách, giới thiệu tên (1 điểm)&#10;- Mời ngồi, đưa thực đơn (1 điểm)">${esc(x.guide || "")}</textarea></div>
       ${item ? `<p class="muted">Sửa câu hỏi chỉ ảnh hưởng các lượt thi bắt đầu sau khi lưu. Bài đã nộp giữ nguyên nội dung lúc thi.</p>` : ""}`;
     const m = openModal(item ? "Sửa câu " + esc(item.id) : "Thêm câu hỏi mới", body,
       `<button class="btn" data-close>Hủy</button><button class="btn pri" id="qsave">Lưu câu hỏi</button>`);
@@ -714,12 +760,14 @@
       const q = {
         id: item ? item.id : "", positionId: $("#qpos2", m).value, type,
         q: $("#qtext", m).value.trim(), options: $$(".qo", m).map(i => i.value.trim()),
-        answer: ansEl ? Number(ansEl.value) : null, points: Number($("#qpts", m).value), active: $("#qact", m).value === "1"
+        answer: ansEl ? Number(ansEl.value) : null, points: Number($("#qpts", m).value), active: $("#qact", m).value === "1",
+        guide: $("#qguide", m).value.trim()
       };
       // Kiểm tra giống server để báo lỗi ngay, không phải chờ
       let err = "";
       if (!q.q) err = "Vui lòng nhập nội dung câu hỏi.";
       else if (q.q.length > 3000) err = "Nội dung câu hỏi quá dài (tối đa 3000 ký tự).";
+      else if (q.guide.length > 3000) err = "Đáp án mẫu quá dài (tối đa 3000 ký tự).";
       else if (!(q.points > 0 && q.points <= 100)) err = "Điểm phải lớn hơn 0.";
       else if (type === "TN" && q.options.filter(o => o).length < 2) err = "Câu trắc nghiệm cần ít nhất 2 phương án.";
       else if (type === "TN" && (q.answer === null || !q.options[q.answer])) err = "Vui lòng chọn đáp án đúng (phương án đó không được để trống).";
@@ -748,6 +796,161 @@
         drawBank();
         toast("Chưa lưu được: " + e.message, true);
         editQuestion(item, Object.assign({}, q, { id: item ? item.id : "" }));   // mở lại form, giữ nguyên nội dung đã nhập
+      }
+    };
+  }
+
+  /* ---------- Xuất / nhập ngân hàng đề bằng Excel ---------- */
+  const BANK_COLS = ["Mã câu", "Vị trí", "Loại (TN/TL)", "Nội dung câu hỏi", "Phương án A", "Phương án B", "Phương án C", "Phương án D",
+    "Đáp án đúng", "Điểm", "Trạng thái", "Đáp án mẫu / hướng dẫn chấm"];
+
+  function bankFiltered() {
+    const q = norm(bFilter.q.trim());
+    return (bank || []).filter(x => !x._pending &&
+      (!bFilter.position || x.positionId === bFilter.position) && (!bFilter.type || x.type === bFilter.type) &&
+      (!bFilter.status || (bFilter.status === "on") === x.active) &&
+      (!q || norm(x.q).includes(q) || norm(x.id).includes(q)));
+  }
+
+  async function exportBank() {
+    await run(async () => {
+      if (!bank) return;
+      await loadScript(XLSX_CDN);
+      const X = window.XLSX;
+      const list = bankFiltered();
+      const rows = [BANK_COLS].concat(list.map(x => [x.id, x.positionLabel, x.type, x.q,
+        x.options[0] || "", x.options[1] || "", x.options[2] || "", x.options[3] || "",
+        x.type === "TN" && x.answer !== null ? LABELS[x.answer] : "", x.points, x.active ? "Đang dùng" : "Tạm ẩn", x.guide || ""]));
+      const ws = X.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [12, 11, 8, 60, 24, 24, 24, 24, 9, 7, 11, 50].map(w => ({ wch: w }));
+      const guide = X.utils.aoa_to_sheet([
+        ["CÁCH NHẬP LẠI FILE NÀY VÀO TRANG QUẢN TRỊ (Ngân hàng đề → ⬆ Nhập Excel)"],
+        ["• Giữ nguyên dòng tiêu đề và thứ tự cột của trang \"Ngân hàng đề\"."],
+        ["• Có Mã câu → cập nhật đúng câu đó. Để trống Mã câu → thêm câu mới (hệ thống tự cấp mã)."],
+        ["• Vị trí: " + boot.positions.map(p => p.label).join(", ") + ". Loại: TN (trắc nghiệm) hoặc TL (tự luận)."],
+        ["• Câu TN cần ít nhất 2 phương án và Đáp án đúng là A, B, C hoặc D. Câu TL để trống phương án và đáp án."],
+        ["• Trạng thái: Đang dùng hoặc Tạm ẩn (để trống = Đang dùng). Đáp án mẫu chỉ người chấm thấy."],
+        ["• Muốn xóa câu: không xóa trong file, hãy bấm Xóa (hoặc Ẩn) trên trang quản trị."],
+        ["• Nếu có dòng lỗi, hệ thống không nhập dòng nào cho đến khi sửa xong."]
+      ]);
+      guide["!cols"] = [{ wch: 110 }];
+      const wb = X.utils.book_new();
+      X.utils.book_append_sheet(wb, ws, "Ngân hàng đề");
+      X.utils.book_append_sheet(wb, guide, "Hướng dẫn");
+      const now = new Date();
+      X.writeFile(wb, "NganHangDe_" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + ".xlsx");
+      toast("Đã xuất " + list.length + " câu hỏi ra Excel.");
+    });
+  }
+
+  // Đọc 1 dòng Excel thành câu hỏi + kiểm tra giống server. Trả { q, error, kind }.
+  function parseBankRow(get, rowNo) {
+    const id = String(get("id")).trim();
+    const posTxt = norm(String(get("pos")).trim());
+    const p = boot.positions.find(x => norm(x.label) === posTxt || x.id === posTxt);
+    const t = norm(String(get("type")).trim());
+    const type = (t === "tn" || t.startsWith("trac")) ? "TN" : ((t === "tl" || t.startsWith("tu luan")) ? "TL" : "");
+    const options = ["a", "b", "c", "d"].map(k => String(get(k)).trim());
+    const ansTxt = String(get("ans")).trim().toUpperCase();
+    const answer = LABELS.indexOf(ansTxt);
+    const ptsRaw = String(get("pts")).trim().replace(",", ".");
+    const points = ptsRaw === "" ? (type === "TL" ? 2 : 3) : Number(ptsRaw);
+    const st = norm(String(get("status")).trim());
+    const q = {
+      rowNo, id, positionId: p ? p.id : "", type, q: String(get("q")).trim(),
+      options: type === "TN" ? options : ["", "", "", ""], answer: type === "TN" && answer >= 0 ? answer : null,
+      points, active: !(st === "tam an" || st === "an" || st === "tat" || st === "khong"), guide: String(get("guide")).trim()
+    };
+    let error = "";
+    if (!p) error = "Vị trí \"" + get("pos") + "\" không hợp lệ.";
+    else if (!type) error = "Loại phải là TN hoặc TL.";
+    else if (!q.q) error = "Thiếu nội dung câu hỏi.";
+    else if (q.q.length > 3000) error = "Nội dung câu hỏi quá dài.";
+    else if (!(points > 0 && points <= 100)) error = "Điểm phải lớn hơn 0.";
+    else if (type === "TN" && options.filter(o => o).length < 2) error = "Câu trắc nghiệm cần ít nhất 2 phương án.";
+    else if (type === "TN" && (answer < 0 || !options[answer])) error = "Đáp án đúng phải là A–D và phương án đó không được trống.";
+    else if (q.guide.length > 3000) error = "Đáp án mẫu quá dài.";
+    else if (id && !bank.some(x => x.id === id)) error = "Không có câu mã " + id + " trong ngân hàng đề. Để trống Mã câu nếu muốn thêm câu mới.";
+    return { q, error, kind: id ? "update" : "add" };
+  }
+
+  async function importBank(file) {
+    await run(async () => {
+      if (!bank) { const d = await api("admin.bank.list"); bank = d.questions; }
+      await loadScript(XLSX_CDN);
+      const X = window.XLSX;
+      // CSV đọc dạng chữ UTF-8 để giữ tiếng Việt có dấu; xlsx/xls đọc dạng nhị phân
+      const wb = /\.csv$/i.test(file.name) ? X.read(await file.text(), { type: "string" }) : X.read(await file.arrayBuffer(), { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const aoa = X.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
+      // Tìm cột theo tiêu đề (không phân biệt dấu, hoa thường)
+      const head = (aoa[0] || []).map(h => norm(String(h)));
+      const find = (test) => head.findIndex(test);
+      const col = {
+        id: find(h => h.startsWith("ma")), pos: find(h => h.startsWith("vi tri")), type: find(h => h.startsWith("loai")),
+        q: find(h => h.startsWith("noi dung")), a: find(h => /phuong an a$/.test(h)), b: find(h => /phuong an b$/.test(h)),
+        c: find(h => /phuong an c$/.test(h)), d: find(h => /phuong an d$/.test(h)), ans: find(h => h.startsWith("dap an dung")),
+        pts: find(h => h.startsWith("diem")), status: find(h => h.startsWith("trang thai")), guide: find(h => h.startsWith("dap an mau"))
+      };
+      const missing = ["pos", "type", "q"].filter(k => col[k] < 0);
+      if (missing.length) throw new Error("File thiếu cột Vị trí / Loại / Nội dung câu hỏi. Hãy bấm ⬇ Xuất Excel để lấy file mẫu đúng định dạng.");
+      const items = [], seen = {};
+      for (let i = 1; i < aoa.length; i++) {
+        const r = aoa[i];
+        if (!r || r.every(v => String(v).trim() === "")) continue;
+        const it = parseBankRow(k => col[k] >= 0 ? (r[col[k]] === undefined ? "" : r[col[k]]) : "", i + 1);
+        if (!it.error && it.q.id) {
+          if (seen[it.q.id]) it.error = "Mã câu " + it.q.id + " lặp lại (đã có ở dòng " + seen[it.q.id] + ").";
+          else seen[it.q.id] = i + 1;
+        }
+        items.push(it);
+      }
+      if (!items.length) throw new Error("File không có dòng câu hỏi nào.");
+      showImportPreview(file.name, items);
+    });
+  }
+
+  function showImportPreview(fileName, items) {
+    const errs = items.filter(i => i.error);
+    const nAdd = items.filter(i => !i.error && i.kind === "add").length, nUpd = items.filter(i => !i.error && i.kind === "update").length;
+    const tooMany = items.length > 300;
+    const shown = (errs.length ? errs.concat(items.filter(i => !i.error)) : items).slice(0, 200);
+    const body = `
+      <p><b>${esc(fileName)}</b>: ${items.length} dòng · <span class="badge b-ok">${nAdd} thêm mới</span> <span class="badge b-wait">${nUpd} cập nhật</span>${errs.length ? ` <span class="badge b-bad">${errs.length} dòng lỗi</span>` : ""}</p>
+      ${errs.length ? '<div class="sumbox" style="background:var(--redl);color:var(--red)">Có dòng lỗi nên chưa nhập được. Sửa các dòng bên dưới trong file Excel rồi chọn lại file.</div>' : ""}
+      ${tooMany ? '<div class="sumbox" style="background:var(--redl);color:var(--red)">Mỗi lần nhập tối đa 300 câu. Hãy chia file thành nhiều phần.</div>' : ""}
+      ${!errs.length && !tooMany ? '<p class="muted">Câu có Mã câu sẽ được cập nhật (bài thi đã nộp không bị ảnh hưởng). Câu không có mã sẽ được thêm mới. Câu giống hệt hiện tại được bỏ qua.</p>' : ""}
+      <div class="tbl-wrap"><table>
+        <thead><tr><th class="num">Dòng</th><th>Kết quả</th><th>Mã</th><th>Vị trí</th><th>Loại</th><th>Nội dung</th><th>Đáp án</th><th class="num">Điểm</th></tr></thead>
+        <tbody>${shown.map(i => `<tr${i.error ? ' class="row-err"' : ""}>
+          <td class="num">${i.q.rowNo}</td>
+          <td>${i.error ? `<span class="badge b-bad">Lỗi</span><div class="muted" style="color:var(--red)">${esc(i.error)}</div>` : (i.kind === "add" ? '<span class="badge b-ok">Thêm mới</span>' : '<span class="badge b-wait">Cập nhật</span>')}</td>
+          <td>${esc(i.q.id || "—")}</td><td>${esc(posLabel(i.q.positionId) || "")}</td><td>${esc(i.q.type)}</td>
+          <td><div class="clip" title="${esc(i.q.q)}">${esc(i.q.q)}</div></td>
+          <td>${i.q.type === "TN" && i.q.answer !== null ? LABELS[i.q.answer] : "—"}</td><td class="num">${fmtNum(i.q.points)}</td></tr>`).join("")}</tbody>
+      </table></div>
+      ${items.length > shown.length ? `<p class="muted">… và ${items.length - shown.length} dòng nữa.</p>` : ""}`;
+    const ok = !errs.length && !tooMany;
+    const m = openModal("Nhập ngân hàng đề từ Excel", body,
+      `<button class="btn" data-close>${ok ? "Hủy" : "Đóng"}</button>${ok ? `<button class="btn pri" id="impgo">Nhập ${items.length} câu</button>` : ""}`, true);
+    if (!ok) return;
+    $("#impgo", m).onclick = async () => {
+      $("#impgo", m).disabled = true;
+      try {
+        const d = await api("admin.bank.import", { questions: items.map(i => i.q) });
+        closeModal();
+        toast(`Đã nhập: ${d.added} câu mới, ${d.updated} câu cập nhật${d.unchanged ? ", " + d.unchanged + " câu không đổi" : ""}.`);
+        applyBankMeta(d);
+        bank = null; logs = null;
+        renderBank();
+      } catch (e) {
+        if (e.data && Array.isArray(e.data.errors)) {
+          const byRow = {}; e.data.errors.forEach(x => byRow[x.row] = x.error);
+          items.forEach(i => { if (byRow[i.q.rowNo]) i.error = byRow[i.q.rowNo]; });
+          showImportPreview(fileName, items);
+        }
+        toast(e.message, true);
+        const b = $("#impgo"); if (b) b.disabled = false;
       }
     };
   }
