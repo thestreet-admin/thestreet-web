@@ -111,3 +111,9 @@
 #ts-admin-app .log-detail{max-width:520px;white-space:pre-wrap;word-break:break-word;font-size:13px;color:var(--ink2)}
 #ts-admin-app .login input{margin:8px 0}
 #ts-admin-app .login #lb{margin-top:8px}
+/* Đáp án mẫu, cảnh báo chấm trùng, nhập Excel */
+#ts-admin-app .guide{margin:8px 0;background:#f2f7ff;border:1px solid #cfe0f7;border-radius:8px;padding:8px 10px}
+#ts-admin-app .guide summary{cursor:pointer;font-weight:700;color:#1d4f91;font-size:13px}
+#ts-admin-app .guide div{white-space:pre-wrap;margin-top:6px;font-size:13px;color:var(--ink)}
+#ts-admin-app .warnbox{background:var(--ambl);color:var(--amb);border:1px solid #f3d29a}
+#ts-admin-app tr.row-err td{background:#fff6f5}
