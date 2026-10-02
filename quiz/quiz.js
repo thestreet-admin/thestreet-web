@@ -8,7 +8,9 @@
   if (!me || document.getElementById("ts-quiz-css")) return;
   var link = document.createElement("link");
   link.id = "ts-quiz-css"; link.rel = "stylesheet";
-  link.href = new URL("quiz.css", me.src).href;
+  var u = new URL("quiz.css", me.src);
+  u.search = new URL(me.src).search;   // cùng mã phiên bản với file JS → luôn lấy CSS mới nhất
+  link.href = u.href;
   document.head.appendChild(link);
 })();
 (function () {

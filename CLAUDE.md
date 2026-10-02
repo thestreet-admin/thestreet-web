@@ -8,7 +8,7 @@
 | Database | Google Sheet (tab CauHoi, KyThi, LuotThi, KetQuaThi) | không nằm trong repo |
 
 URL công khai: `https://thestreet-admin.github.io/thestreet-web/admin/admin.js` và `.../quiz/quiz.js`.
-Đẩy lên nhánh `main` → GitHub Pages tự cập nhật (bộ nhớ đệm ~10 phút). **Không cần sửa WordPress.**
+Đẩy lên nhánh `main` → GitHub Pages đăng bản mới sau ~1 phút; đoạn nhúng thêm `?v=Date.now()` nên trình duyệt luôn lấy bản mới (file CSS dùng cùng mã `?v`). **Không cần sửa WordPress.**
 
 ## Cấu trúc
 - `admin/admin.js`, `admin/admin.css` — trang quản trị (đăng nhập bằng mật khẩu, 4 tab: Tổng quan, Bài thi & Chấm điểm, Ngân hàng đề, Đợt thi).
@@ -23,7 +23,7 @@ URL công khai: `https://thestreet-admin.github.io/thestreet-web/admin/admin.js`
 3. **Elementor dựng widget 2 lần** (bản máy tính + điện thoại, 1 bản ẩn, trùng id). Không dùng `document.getElementById` để chọn khung gốc:
    - admin.js: chọn khung đang HIỂN THỊ (`pickRoot`/`isVisible`), theo dõi mỗi giây và chuyển khung khi cần; chặn chạy 2 lần bằng `window.__tsAdminStarted`.
    - quiz.js: chọn khung nằm cạnh thẻ script (`document.currentScript.parentNode`).
-4. **WordPress đổi `&` thành `&#038;`** nếu mã nằm trong nội dung trang → mã JS phải nằm trong file .js, không dán inline. Đoạn nhúng trong WORDPRESS.md không được chứa `&` hay `<` trong phần JavaScript (thuộc tính `onerror`).
+4. **WordPress đổi `&` thành `&#038;`** nếu mã nằm trong nội dung trang → mã JS phải nằm trong file .js. Đoạn JS nạp file trong WORDPRESS.md phải viết trên 1 dòng, không chứa `&`, `<`, `>`. File .js được chèn động nên `document.currentScript` vẫn dùng được trong admin.js/quiz.js.
 5. Mọi selector CSS của trang quản trị bắt đầu bằng `#ts-admin-app` để không phá theme WordPress.
 6. Luôn `esc()` dữ liệu trước khi chèn vào `innerHTML` (nội dung câu hỏi, câu trả lời của nhân viên...).
 7. Gọi API bằng `fetch(POST, Content-Type: text/plain)` để không bị chặn CORS và đọc được kết quả; không dùng `mode: "no-cors"` (sẽ không biết lưu thành công hay thất bại).

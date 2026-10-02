@@ -70,6 +70,10 @@ def main():
         vis.locator("[data-tab=bank]").click(); pg.wait_for_timeout(500)
         assert "Phục Vụ" in vis.inner_text()
         print("✓ Trang quản trị: chạy qua đoạn nhúng 2 dòng, chịu được WordPress đổi '&' và Elementor 2 khung")
+        urls = pg.evaluate("performance.getEntriesByType('resource').map(e => e.name)")
+        for f in ("admin/admin.js?v=", "admin/admin.css?v="):
+            assert any(f in u for u in urls), (f, urls)
+        print("✓ File JS và CSS luôn tải kèm mã phiên bản mới (?v=...), không dùng bản cũ trong bộ nhớ đệm")
 
         # 2) Trang thi: hiện kỳ thi, bắt đầu thi được
         pg = open_page(wordpress(QUIZ))
