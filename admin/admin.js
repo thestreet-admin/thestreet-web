@@ -44,6 +44,8 @@
   let tab = ssGet("ts_admin_tab") || "overview";
   let period = ssGet("ts_admin_period") || "";   // lọc đợt thi dùng chung cho Tổng quan & Bài thi
   let stats = null, statsFor = null;
+  let trend = [];                      // xu hướng qua các đợt (server trả kèm thống kê)
+  let tView = { metric: "passRate", hidden: {} };
   let qFilter = { position: "", showAll: false };
   let results = null, resultsFor = null;
   let voids = null, voidsFor = null;   // bài đã hủy khi cho thi lại
@@ -293,7 +295,7 @@
     if (!stats || statsFor !== period) {
       const d = await run(() => api("admin.reports.stats", { period }));
       if (!d) return;
-      stats = d.stats; statsFor = period;
+      stats = d.stats; statsFor = period; trend = d.trend || [];
     }
     if (tab !== "overview") return;
     drawOverview();
@@ -312,6 +314,8 @@
         <div class="kpi"><div class="l">Tỉ lệ đạt</div><div class="v">${pctText(o.passRate)}</div><div class="s">${o.passed}/${o.graded} bài đã chấm</div></div>
         <div class="kpi"><div class="l">Điểm trung bình</div><div class="v">${pctText(o.avgPct)}</div><div class="s">% tổng điểm, bài đã chấm</div></div>
       </div>
+
+      <div class="card" id="trend"></div>
 
       <div class="card">
         <div class="card-h"><h3>Kết quả theo vị trí</h3><span class="muted">Tỉ lệ đạt và điểm TB chỉ tính bài đã chấm tự luận</span></div>
@@ -348,8 +352,129 @@
         </table></div>` : '<div class="empty">Chưa có bài tự luận nào được chấm.</div>'}
       </div>`;
 
+    drawTrend();
     $("#qpos").onchange = e => { qFilter.position = e.target.value; qFilter.showAll = false; drawOverview(); };
     const qa = $("#qall"); if (qa) qa.onclick = () => { qFilter.showAll = !qFilter.showAll; drawOverview(); };
+  }
+
+  /* ---------- Biểu đồ xu hướng qua các đợt (SVG tự vẽ, không cần thư viện) ---------- */
+  const TREND_METRICS = [
+    { key: "passRate", label: "Tỉ lệ đạt", note: "% bài đạt trong số bài đã chấm tự luận" },
+    { key: "avgPct", label: "Điểm TB tổng", note: "% tổng điểm, chỉ tính bài đã chấm tự luận" },
+    { key: "avgMcqPct", label: "Điểm TB trắc nghiệm", note: "% điểm trắc nghiệm, tính mọi bài đã nộp" }
+  ];
+  const SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
+  function trendSeries() {
+    const labels = boot.positions.map(p => p.label);
+    trend.forEach(t => Object.keys(t.byPosition || {}).forEach(l => { if (labels.indexOf(l) < 0) labels.push(l); }));
+    return [{ key: "", label: "Tất cả vị trí", color: "var(--ink)", width: 3 }]
+      .concat(labels.slice(0, SERIES_COLORS.length).map((l, i) => ({ key: l, label: l, color: SERIES_COLORS[i], width: 2 })));
+  }
+  function trendVal(t, sKey, m) { const o = sKey ? (t.byPosition || {})[sKey] : t; return o ? o[m] : null; }
+  function trendCount(t, sKey) { const o = sKey ? (t.byPosition || {})[sKey] : t; return o ? o.count : 0; }
+
+  function drawTrend() {
+    const box = $("#trend"); if (!box) return;
+    const m = TREND_METRICS.find(x => x.key === tView.metric) || TREND_METRICS[0];
+    const series = trendSeries();
+    const shown = series.filter(s => !tView.hidden[s.label]);
+    const head = `<div class="card-h"><h3>Xu hướng qua các đợt</h3>
+        <div class="seg" role="group" aria-label="Chỉ số">${TREND_METRICS.map(x =>
+          `<button type="button" class="btn sm${x.key === m.key ? " on" : ""}" data-metric="${x.key}">${esc(x.label)}</button>`).join("")}</div></div>`;
+    if (trend.length < 2) {
+      box.innerHTML = head + `<div class="empty">${trend.length ? "Mới có 1 đợt thi có bài nộp. Biểu đồ xu hướng sẽ hiện khi có từ 2 đợt trở lên." : "Chưa có bài thi nào."}</div>`;
+      bindTrend(); return;
+    }
+    const legend = `<div class="legend">${series.map(s => `<button type="button" class="lg${tView.hidden[s.label] ? " off" : ""}" data-series="${esc(s.label)}" aria-pressed="${!tView.hidden[s.label]}" title="Bấm để ẩn/hiện">
+        <i style="background:${s.color};height:${s.width}px"></i>${esc(s.label)}</button>`).join("")}</div>`;
+
+    // Hình học
+    // Vẽ đúng bằng bề rộng khung (chữ không bị phóng to); nhiều đợt thì cho cuộn ngang
+    const n = trend.length, W = Math.max(300, n * 80, (box.clientWidth || 700) - 36), H = 280, L = 44, R = 20, T = 14, B = 46, PAD = 44;
+    const x = i => L + PAD + (n === 1 ? (W - L - R - 2 * PAD) / 2 : i * (W - L - R - 2 * PAD) / (n - 1));
+    const y = v => T + (100 - Math.max(0, Math.min(100, v))) / 100 * (H - T - B);
+    const short = s => s.length > 16 ? s.slice(0, 15) + "…" : s;
+    const sel = trend.findIndex(t => norm(t.name) === norm(period));
+    let g = "";
+    if (sel >= 0) g += `<rect class="selband" x="${x(sel) - 22}" y="${T}" width="44" height="${H - T - B}" rx="6"></rect>`;
+    [0, 25, 50, 75, 100].forEach(v => {
+      g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"></line><text class="ax" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v}%</text>`;
+    });
+    const step = n > 12 ? Math.ceil(n / 12) : 1;
+    trend.forEach((t, i) => {
+      if (i % step === 0 || i === n - 1) g += `<text class="ax${i === sel ? " cur" : ""}" x="${x(i)}" y="${H - B + 20}" text-anchor="middle">${esc(short(t.name))}<title>${esc(t.name)}</title></text>`;
+    });
+    // Mỗi chuỗi: đường nối các đợt có số liệu (đợt trống → đứt đoạn), chấm tròn tại mỗi đợt
+    shown.slice().reverse().forEach(s => {
+      let path = "", pen = false, dots = "";
+      trend.forEach((t, i) => {
+        const v = trendVal(t, s.key, m.key);
+        if (v === null || v === undefined) { pen = false; return; }
+        path += (pen ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1);
+        pen = true;
+        dots += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${s.key ? 4 : 5}" fill="${s.color}"></circle>`;
+      });
+      if (path) g += `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="${s.width}" stroke-linejoin="round" stroke-linecap="round"></path><g class="dots">${dots}</g>`;
+    });
+    // Nhãn trực tiếp ở điểm cuối cho đường "Tất cả vị trí"
+    const lastAll = trend.length - 1, lv = trendVal(trend[lastAll], "", m.key);
+    if (!tView.hidden[series[0].label] && lv !== null && lv !== undefined)
+      g += `<text class="dl" x="${x(lastAll) - 8}" y="${y(lv) - 10}" text-anchor="end">${esc(pctText(lv))}</text>`;
+    g += `<line class="xh" x1="0" x2="0" y1="${T}" y2="${H - B}" style="display:none"></line>`;
+
+    // Bảng số liệu (đọc được không cần di chuột / không cần phân biệt màu)
+    const table = `<details class="trend-tbl"><summary>Xem bảng số liệu</summary><div class="tbl-wrap"><table>
+      <thead><tr><th>Đợt thi</th><th class="num">Số bài</th><th class="num">Đã chấm</th>${series.map(s => `<th class="num">${esc(s.label)}</th>`).join("")}</tr></thead>
+      <tbody>${trend.map(t => `<tr><td><b>${esc(t.name)}</b>${t.passPct !== null && t.passPct !== undefined ? ` <span class="muted">· đạt từ ${t.passPct}%</span>` : ""}</td>
+        <td class="num">${t.count}</td><td class="num">${t.graded}</td>${series.map(s => `<td class="num">${pctText(trendVal(t, s.key, m.key))}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table></div><p class="muted">Chỉ số: ${esc(m.label)}.</p></details>`;
+
+    box.innerHTML = head + legend + `<div class="chart-wrap"><svg class="trend-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc("Biểu đồ " + m.label + " qua " + n + " đợt thi")}">${g}
+        <rect class="hit" x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent"></rect></svg><div class="tip" style="display:none"></div></div>
+      <p class="muted">${esc(m.note)}. Bấm vào một đợt trên biểu đồ để xem chi tiết đợt đó bên dưới.</p>` + table;
+    bindTrend();
+
+    // Di chuột: đường dọc bám theo đợt gần nhất + bảng giá trị của mọi đường đang hiện
+    const svg = $(".trend-svg", box), tip = $(".tip", box), xh = $(".xh", box), wrap = $(".chart-wrap", box);
+    const nearest = ev => {
+      const r = svg.getBoundingClientRect();
+      const px = (ev.clientX - r.left) / r.width * W;
+      let best = 0; trend.forEach((t, i) => { if (Math.abs(x(i) - px) < Math.abs(x(best) - px)) best = i; });
+      return best;
+    };
+    const hide = () => { tip.style.display = "none"; xh.style.display = "none"; };
+    svg.addEventListener("pointermove", ev => {
+      const i = nearest(ev), t = trend[i];
+      xh.setAttribute("x1", x(i)); xh.setAttribute("x2", x(i)); xh.style.display = "";
+      tip.innerHTML = `<div class="tt">${esc(t.name)}</div><div class="muted">${t.count} bài · ${t.graded} đã chấm</div>` + shown.map(s => {
+        const v = trendVal(t, s.key, m.key), c = trendCount(t, s.key);
+        return `<div class="tr"><i style="background:${s.color}"></i><b>${esc(pctText(v))}</b><span>${esc(s.label)}${s.key && c ? ` (${c} bài)` : ""}</span></div>`;
+      }).join("");
+      tip.style.display = "";
+      const r = svg.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+      const left = r.left - wr.left + wrap.scrollLeft + x(i) / W * r.width;
+      tip.style.left = (left + tip.offsetWidth + 16 > wrap.scrollLeft + wrap.clientWidth ? left - tip.offsetWidth - 12 : left + 12) + "px";
+    });
+    svg.addEventListener("pointerleave", hide);
+    svg.addEventListener("click", ev => {
+      const t = trend[nearest(ev)];
+      const p = boot.periods.find(x => norm(x.name) === norm(t.name));
+      if (!p || p.name === period) return;
+      period = p.name; ssSet("ts_admin_period", period); renderOverview();
+    });
+  }
+  let trendW = 0, trendTimer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(trendTimer);
+    trendTimer = setTimeout(() => {
+      const box = $("#trend");
+      if (tab === "overview" && box && trend.length > 1 && Math.abs(box.clientWidth - trendW) > 40) drawTrend();
+    }, 250);
+  });
+  function bindTrend() {
+    const box = $("#trend"); trendW = box ? box.clientWidth : 0;
+    $$("#trend [data-metric]").forEach(b => b.onclick = () => { tView.metric = b.dataset.metric; drawTrend(); });
+    $$("#trend [data-series]").forEach(b => b.onclick = () => { const k = b.dataset.series; tView.hidden[k] = !tView.hidden[k]; drawTrend(); });
   }
 
   async function exportExcel() {
@@ -389,6 +514,18 @@
       const ws4 = X.utils.aoa_to_sheet(rows4);
       ws4["!cols"] = [11, 11, 70, 14, 18].map(w => ({ wch: w }));
       X.utils.book_append_sheet(wb, ws4, "Câu tự luận");
+
+      const tr = d.trend || [];
+      if (tr.length) {
+        const rows5 = [["Đợt thi", "Vị trí", "Số bài", "Đã chấm", "Đạt", "Tỉ lệ đạt (%)", "Điểm TB tổng (%)", "Điểm TB trắc nghiệm (%)", "Điểm đạt của đợt (%)"]];
+        tr.forEach(t => {
+          rows5.push([t.name, "TẤT CẢ", t.count, t.graded, t.passed, t.passRate ?? "", t.avgPct ?? "", t.avgMcqPct ?? "", t.passPct ?? ""]);
+          Object.keys(t.byPosition || {}).forEach(k => { const p = t.byPosition[k]; rows5.push([t.name, k, p.count, p.graded, p.passed, p.passRate ?? "", p.avgPct ?? "", p.avgMcqPct ?? "", ""]); });
+        });
+        const ws5 = X.utils.aoa_to_sheet(rows5);
+        ws5["!cols"] = [24, 12, 8, 9, 7, 13, 16, 22, 18].map(w => ({ wch: w }));
+        X.utils.book_append_sheet(wb, ws5, "Xu hướng qua các đợt");
+      }
 
       const now = new Date();
       const name = "BaoCao_" + (period || "TatCa").replace(/[\\\/:*?"<>|\s]+/g, "_") + "_" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + ".xlsx";
