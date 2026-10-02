@@ -106,3 +106,8 @@
   #ts-admin-app .info-grid{grid-template-columns:1fr 1fr}
   #ts-admin-app .row2{grid-template-columns:1fr}
 }
+/* Tài khoản & nhật ký */
+#ts-admin-app .who{font-size:13px;color:var(--ink2);white-space:nowrap}
+#ts-admin-app .log-detail{max-width:520px;white-space:pre-wrap;word-break:break-word;font-size:13px;color:var(--ink2)}
+#ts-admin-app .login input{margin:8px 0}
+#ts-admin-app .login #lb{margin-top:8px}

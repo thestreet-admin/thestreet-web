@@ -11,7 +11,7 @@ URL công khai: `https://thestreet-admin.github.io/thestreet-web/admin/admin.js`
 Đẩy lên nhánh `main` → GitHub Pages đăng bản mới sau ~1 phút; đoạn nhúng thêm `?v=Date.now()` nên trình duyệt luôn lấy bản mới (file CSS dùng cùng mã `?v`). **Không cần sửa WordPress.**
 
 ## Cấu trúc
-- `admin/admin.js`, `admin/admin.css` — trang quản trị (đăng nhập bằng mật khẩu, 4 tab: Tổng quan, Bài thi & Chấm điểm, Ngân hàng đề, Đợt thi).
+- `admin/admin.js`, `admin/admin.css` — trang quản trị (đăng nhập bằng tên + mật khẩu; Quản lý thấy 6 tab: Tổng quan, Bài thi & Chấm điểm, Ngân hàng đề, Đợt thi, Tài khoản, Nhật ký; Người chấm chỉ thấy tab Bài thi & Chấm điểm).
 - `quiz/quiz.js`, `quiz/quiz.css` — trang thi.
 - `WORDPRESS.md` — đoạn nhúng dán vào widget HTML của Elementor (đã dán, hiếm khi đổi).
 - `preview/` — mở thử trên máy (gọi API thật).
@@ -32,8 +32,9 @@ URL công khai: `https://thestreet-admin.github.io/thestreet-web/admin/admin.js`
 
 ## API (Apps Script) — các action
 Trang thi: `GET` (danh sách đợt thi đang mở), `start`, `submit`.
-Quản trị (cần `token` từ `admin.login`): `admin.bootstrap`, `admin.bank.list|save|toggle|delete`, `admin.periods.save|delete`,
-`admin.results.list|get|grade|reset`, `admin.reports.stats|export|pdf`, `admin.logout`.
+Quản trị (cần `token` từ `admin.login {username, password}`; tên `admin` hoặc để trống = quản trị chính): `admin.bootstrap` (trả kèm `me` = người đang đăng nhập), `admin.bank.list|save|toggle|delete`, `admin.periods.save|delete`,
+`admin.results.list|get|grade|reset`, `admin.reports.stats|export|pdf`, `admin.accounts.list|save|delete`, `admin.account.password`, `admin.log.list`, `admin.logout`.
+Người chấm gọi chức năng khác sẽ nhận lỗi `FORBIDDEN` → giao diện ẩn luôn các tab/nút đó (`isMgr()`). Tên người chấm: tài khoản riêng lấy theo tài khoản, chỉ quản trị chính mới gõ tay (`isMaster()`).
 Các thao tác ngân hàng đề trả kèm `bank` + `bankIssues` để không phải gọi lại `admin.bootstrap`.
 Khi thêm action mới: sửa cả repo `thestreet-appscript` và bổ sung giả lập trong `tests/ui_test.py`.
 
