@@ -30,14 +30,17 @@ def serve_repo(route):
 
 STATS = {"overall": {"count": 0, "graded": 0, "pending": 0, "passed": 0, "passRate": None, "avgPct": None, "avgMcqPct": None}, "byPosition": [], "questions": [], "essays": []}
 BANK_META = {"bank": [{"positionId": "phucvu", "label": "Phục Vụ", "total": 14, "activeTN": 10, "activeTL": 4}], "bankIssues": {"noIdRows": [], "duplicateIds": []}}
+PERIODS = [{"name": "Đợt dài", "opensAt": None, "closesAt": None, "duration": 60, "passPct": 70, "note": "", "mcqCount": 12, "essayCount": 4, "status": "open", "submitted": 0, "started": 0}]
+SAVED = []
 def api(route):
     req = route.request
     if req.method == "GET":   # trang thi lấy danh sách kỳ thi
-        return route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True, "periods": [{"name": "Quý 4/2026", "duration": 45}], "mcqCount": 10, "essayCount": 4}))
+        return route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True, "periods": [{"name": "Quý 4/2026", "duration": 45, "mcqCount": 10, "essayCount": 4}, {"name": "Đợt ngắn", "duration": 30, "mcqCount": 5, "essayCount": 2}], "mcqCount": 10, "essayCount": 4}))
     b = json.loads(req.post_data or "{}"); a = b.get("action")
     r = {"result": "success"}
     if a == "admin.login": r = {"result": "success", "token": "a" * 64} if b.get("password") == "pw" else {"result": "error", "code": "AUTH_FAIL", "error": "Mật khẩu không đúng."}
-    elif a == "admin.bootstrap": r = dict(result="success", positions=[{"id": "phucvu", "label": "Phục Vụ"}], config={"mcqCount": 10, "essayCount": 4, "defaultDuration": 60, "defaultPassPct": 70}, periods=[], pending=0, **BANK_META)
+    elif a == "admin.bootstrap": r = dict(result="success", positions=[{"id": "phucvu", "label": "Phục Vụ"}], config={"mcqCount": 10, "essayCount": 4, "defaultDuration": 60, "defaultPassPct": 70}, periods=PERIODS, pending=0, **BANK_META)
+    elif a == "admin.periods.save": SAVED.append(b["period"])
     elif a == "admin.reports.stats": r = {"result": "success", "stats": STATS}
     elif a == "admin.bank.list": r = {"result": "success", "questions": []}
     elif a == "start": r = {"result": "success", "sessionId": "s1", "name": b["name"], "empId": b["empId"], "positionId": "phucvu", "positionLabel": "Phục Vụ", "period": b["period"], "startedAt": 0, "endsAt": 45 * 60000, "serverNow": 0,
@@ -69,6 +72,14 @@ def main():
         assert "Tổng quan" in vis.inner_text()
         vis.locator("[data-tab=bank]").click(); pg.wait_for_timeout(500)
         assert "Phục Vụ" in vis.inner_text()
+        assert "cần tối thiểu 12 TN" in vis.inner_text(), "cảnh báo thiếu câu theo đợt thi đang mở"
+        vis.locator("[data-tab=periods]").click(); pg.wait_for_timeout(500)
+        assert "12 TN + 4 TL" in vis.inner_text()
+        vis.locator('[data-act="edit"]').click(); pg.wait_for_timeout(300)
+        assert pg.locator("#pmcq").input_value() == "12" and pg.locator("#pessay").input_value() == "4"
+        pg.locator("#pmcq").fill("15"); pg.locator("#pessay").fill("6"); pg.locator("#psave").click(); pg.wait_for_timeout(800)
+        assert SAVED and SAVED[-1]["mcqCount"] == 15 and SAVED[-1]["essayCount"] == 6, SAVED
+        print("✓ Đợt thi: hiện và lưu số câu TN/TL riêng của từng đợt")
         print("✓ Trang quản trị: chạy qua đoạn nhúng 2 dòng, chịu được WordPress đổi '&' và Elementor 2 khung")
         urls = pg.evaluate("performance.getEntriesByType('resource').map(e => e.name)")
         for f in ("admin/admin.js?v=", "admin/admin.css?v="):
@@ -78,6 +89,10 @@ def main():
         # 2) Trang thi: hiện kỳ thi, bắt đầu thi được
         pg = open_page(wordpress(QUIZ))
         pg.wait_for_function("document.querySelector('#exam-period') && document.querySelector('#exam-period').options.length > 1", timeout=5000)
+        pg.select_option("#exam-period", "Đợt ngắn")
+        assert "5 câu trắc nghiệm + 2 câu tự luận" in pg.inner_text("#ts-count-text"), pg.inner_text("#ts-count-text")
+        pg.select_option("#exam-period", "Quý 4/2026")
+        assert "10 câu trắc nghiệm + 4 câu tự luận" in pg.inner_text("#ts-count-text")
         pg.select_option("#exam-period", "Quý 4/2026"); pg.fill("#candidate-name", "Nguyễn Văn A"); pg.fill("#emp-id", "001")
         pg.click(".ts-pos-btn[data-id=phucvu]"); pg.click("#start-btn"); pg.wait_for_timeout(800)
         assert "Câu 1" in pg.inner_text("#the-street-quiz-app") and "45:00" >= pg.inner_text("#ts-timer-countdown") > "44:"
