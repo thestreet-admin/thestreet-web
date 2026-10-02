@@ -32,14 +32,38 @@ STATS = {"overall": {"count": 0, "graded": 0, "pending": 0, "passed": 0, "passRa
 BANK_META = {"bank": [{"positionId": "phucvu", "label": "Phục Vụ", "total": 14, "activeTN": 10, "activeTL": 4}], "bankIssues": {"noIdRows": [], "duplicateIds": []}}
 PERIODS = [{"name": "Đợt dài", "opensAt": None, "closesAt": None, "duration": 60, "passPct": 70, "note": "", "mcqCount": 12, "essayCount": 4, "status": "open", "submitted": 0, "started": 0}]
 SAVED = []
+ACC_SAVED = []
+GRADED = []
+ME = {"a" * 64: {"username": "admin", "name": "Quản trị chính", "role": "quanly", "roleLabel": "Quản lý"},
+      "c" * 64: {"username": "lan", "name": "Chị Lan", "role": "chamthi", "roleLabel": "Người chấm"}}
+ACCOUNTS = [{"username": "lan", "name": "Chị Lan", "role": "chamthi", "roleLabel": "Người chấm", "active": True, "createdAt": 0, "lastLogin": None}]
+LOGS = [{"time": 1790000000000, "username": "lan", "name": "Chị Lan", "action": "Sửa điểm", "target": "Nguyễn Văn A (001) · Phục Vụ · Quý 4/2026", "detail": "Trước: 20/40 (Không đạt, chấm bởi HR) → 30/40 điểm → Đạt"},
+        {"time": 1789990000000, "username": "admin", "name": "Quản trị chính", "action": "Xóa câu hỏi", "target": "PV-TN-003", "detail": "Phục Vụ · TN · 3 điểm: \"Câu cũ\""},
+        {"time": 1789980000000, "username": "admin", "name": "Quản trị chính", "action": "Đăng nhập", "target": "", "detail": ""}]
+RESULT = {"key": "s1", "row": 2, "time": 1789000000000, "name": "Nguyễn Văn A", "empId": "001", "position": "Phục Vụ", "period": "Đợt dài", "mcqScore": 18, "mcqMax": 30, "correct": "6/10",
+          "essayScore": None, "essayMax": 2, "total": None, "max": 32, "pct": None, "result": "", "grader": "", "note": "", "graded": False, "gradedAt": None, "sys": "", "legacy": False}
 def api(route):
     req = route.request
     if req.method == "GET":   # trang thi lấy danh sách kỳ thi
         return route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True, "periods": [{"name": "Quý 4/2026", "duration": 45, "mcqCount": 10, "essayCount": 4}, {"name": "Đợt ngắn", "duration": 30, "mcqCount": 5, "essayCount": 2}], "mcqCount": 10, "essayCount": 4}))
     b = json.loads(req.post_data or "{}"); a = b.get("action")
     r = {"result": "success"}
-    if a == "admin.login": r = {"result": "success", "token": "a" * 64} if b.get("password") == "pw" else {"result": "error", "code": "AUTH_FAIL", "error": "Mật khẩu không đúng."}
-    elif a == "admin.bootstrap": r = dict(result="success", positions=[{"id": "phucvu", "label": "Phục Vụ"}], config={"mcqCount": 10, "essayCount": 4, "defaultDuration": 60, "defaultPassPct": 70}, periods=PERIODS, pending=0, **BANK_META)
+    me = ME.get(b.get("token"), ME["a" * 64])
+    if a == "admin.login":
+        u, pw = b.get("username", ""), b.get("password")
+        tok = "a" * 64 if u in ("", "admin") and pw == "pw" else ("c" * 64 if u == "lan" and pw == "pw2" else None)
+        r = {"result": "success", "token": tok, "me": ME[tok]} if tok else {"result": "error", "code": "AUTH_FAIL", "error": "Tên đăng nhập hoặc mật khẩu không đúng."}
+    elif a == "admin.bootstrap": r = dict(result="success", positions=[{"id": "phucvu", "label": "Phục Vụ"}], config={"mcqCount": 10, "essayCount": 4, "defaultDuration": 60, "defaultPassPct": 70}, periods=PERIODS, pending=1, me=me, **BANK_META)
+    elif me["role"] != "quanly" and a not in ("admin.results.list", "admin.results.get", "admin.results.grade", "admin.reports.pdf", "admin.account.password", "admin.logout"):
+        r = {"result": "error", "code": "FORBIDDEN", "error": "Không có quyền."}
+    elif a == "admin.accounts.list": r = {"result": "success", "accounts": ACCOUNTS}
+    elif a == "admin.accounts.save":
+        ACC_SAVED.append(b["account"]); x = dict(b["account"]); x.pop("password", None); x["lastLogin"] = None
+        r = {"result": "success", "accounts": ACCOUNTS + [x]}
+    elif a == "admin.log.list": r = {"result": "success", "logs": LOGS, "total": len(LOGS)}
+    elif a == "admin.results.list": r = {"result": "success", "results": [RESULT]}
+    elif a == "admin.results.get": r = {"result": "success", "item": dict(RESULT, passPct=70, essayScores=None, detail="", essaysText=[], data={"mcq": [], "essay": [{"id": "PV-TL-001", "q": "Tự luận 1", "points": 2, "answer": "Trả lời"}]})}
+    elif a == "admin.results.grade": GRADED.append(b); r = {"result": "success", "summary": dict(RESULT, graded=True, essayScore=2, total=20, result="Không đạt", grader=me["name"])}
     elif a == "admin.periods.save": SAVED.append(b["period"])
     elif a == "admin.reports.stats": r = {"result": "success", "stats": STATS}
     elif a == "admin.bank.list": r = {"result": "success", "questions": []}
@@ -85,6 +109,43 @@ def main():
         for f in ("admin/admin.js?v=", "admin/admin.css?v="):
             assert any(f in u for u in urls), (f, urls)
         print("✓ File JS và CSS luôn tải kèm mã phiên bản mới (?v=...), không dùng bản cũ trong bộ nhớ đệm")
+
+        # 1b) Quản lý: tab Tài khoản + Nhật ký
+        txt = vis.inner_text()
+        assert "Quản trị chính" in txt and "Tài khoản" in txt and "Nhật ký" in txt, txt[:300]
+        vis.locator("[data-tab=accounts]").click(); pg.wait_for_timeout(500)
+        assert "Chị Lan" in vis.inner_text() and "Người chấm" in vis.inner_text()
+        vis.locator("#anew").click(); pg.wait_for_timeout(300)
+        pg.locator("#auser").fill("Hung"); pg.locator("#aname").fill("Anh Hùng"); pg.select_option("#arole", "quanly")
+        pg.locator("#asave").click(); pg.wait_for_timeout(300)
+        assert not ACC_SAVED, "chưa có mật khẩu thì không gửi"
+        pg.locator("#apass").fill("matkhau1"); pg.locator("#asave").click(); pg.wait_for_timeout(800)
+        assert ACC_SAVED and ACC_SAVED[-1]["username"] == "hung" and ACC_SAVED[-1]["role"] == "quanly" and ACC_SAVED[-1]["password"] == "matkhau1", ACC_SAVED
+        assert "Anh Hùng" in vis.inner_text()
+        vis.locator("[data-tab=log]").click(); pg.wait_for_timeout(600)
+        txt = vis.inner_text()
+        assert "Sửa điểm" in txt and "Xóa câu hỏi" in txt and "3 dòng" in txt, txt[:500]
+        pg.select_option("#lact", "grade"); pg.wait_for_timeout(200)
+        assert "1 dòng" in vis.inner_text() and "Xóa câu hỏi" not in vis.inner_text()
+        pg.select_option("#lact", ""); pg.select_option("#luser", "admin"); pg.wait_for_timeout(200)
+        assert "2 dòng" in vis.inner_text()
+        print("✓ Quản lý: thêm tài khoản riêng, xem và lọc nhật ký thao tác")
+
+        # 1c) Người chấm: chỉ thấy tab chấm bài, tên người chấm theo tài khoản, không có nút Cho thi lại
+        pg.evaluate("sessionStorage.clear()")
+        pg = open_page(elementor(wordpress(ADMIN)))
+        vis = pg.locator(".show #ts-admin-app")
+        vis.locator("#lu").fill("lan"); vis.locator("#lp").fill("pw2"); vis.locator("#lb").click(); pg.wait_for_timeout(1000)
+        txt = vis.inner_text()
+        assert "Chị Lan" in txt and "Người chấm" in txt and "Đổi mật khẩu" in txt, txt[:300]
+        assert vis.locator("[data-tab]").count() == 1 and "Ngân hàng đề" not in txt and "Nhật ký" not in txt, txt[:300]
+        assert "Nguyễn Văn A" in txt
+        vis.locator("tr[data-key]").click(); pg.wait_for_timeout(600)
+        assert pg.locator("#gname").count() == 0 and pg.locator("#greset").count() == 0
+        assert "theo tài khoản đăng nhập" in pg.locator(".modal").inner_text()
+        pg.locator(".qs[data-v='2']").click(); pg.locator("#gsave").click(); pg.wait_for_timeout(600)
+        assert GRADED and GRADED[-1]["grader"] == "Chị Lan" and GRADED[-1]["essayScores"] == [2], GRADED
+        print("✓ Người chấm: chỉ chấm bài, không sửa đề / cho thi lại, tên người chấm lấy theo tài khoản")
 
         # 2) Trang thi: hiện kỳ thi, bắt đầu thi được
         pg = open_page(wordpress(QUIZ))

@@ -49,6 +49,9 @@
   let rFilter = { position: "", status: "", q: "" };
   let bank = null;
   let bFilter = { position: "", type: "", status: "", q: "" };
+  let accounts = null;
+  let logs = null, logTotal = 0;
+  let lFilter = { user: "", action: "", q: "", limit: 100 };
   let busyCount = 0;
 
   /* ============================== TIỆN ÍCH ============================== */
@@ -88,6 +91,10 @@
     if (s === "upcoming") return '<span class="badge b-wait">◷ Chưa mở</span>';
     return '<span class="badge b-gray">■ Đã đóng</span>';
   }
+  // Người đang đăng nhập (server cũ chưa trả "me" → coi như quản trị chính)
+  function me() { return (boot && boot.me) || { username: "admin", name: "Quản trị chính", role: "quanly", roleLabel: "Quản lý" }; }
+  function isMgr() { return me().role === "quanly"; }
+  function isMaster() { return me().username === "admin"; }
   function posLabel(id) { const p = (boot && boot.positions || []).find(x => x.id === id); return p ? p.label : id; }
 
   function toast(msg, bad) {
@@ -180,18 +187,23 @@
       <div class="brand">THE STREET<small>NHẬU CÓ CHẤT</small></div>
       <h3 style="margin-top:14px;color:var(--g)">Quản trị thi tăng cấp</h3>
       <form id="lf" autocomplete="off">
-        <input type="password" id="lp" placeholder="Mật khẩu quản trị" autofocus>
+        <input type="text" id="lu" placeholder="Tên đăng nhập" value="${esc(lsGet("ts_admin_user") || "")}" autocapitalize="off" spellcheck="false">
+        <input type="password" id="lp" placeholder="Mật khẩu">
         <button class="btn pri" type="submit" id="lb">ĐĂNG NHẬP</button>
       </form>
       <div class="err" id="le">${esc(msg || "")}</div>
+      <p class="muted" style="margin-top:12px">Quản trị chính: tên đăng nhập <b>admin</b>. Chưa có tài khoản? Liên hệ quản lý.</p>
     </div></div>`;
+    (lsGet("ts_admin_user") ? $("#lp") : $("#lu")).focus();
     $("#lf").onsubmit = async e => {
       e.preventDefault();
       const pw = $("#lp").value;
+      const user = $("#lu").value.trim().toLowerCase();
       if (!pw) return;
       $("#lb").disabled = true; $("#le").textContent = "";
       try {
-        const d = await api("admin.login", { password: pw });
+        const d = await api("admin.login", { username: user, password: pw });
+        lsSet("ts_admin_user", user);
         token = d.token; ssSet(TOKEN_KEY, token);
         await loadBoot();
       } catch (err) {
@@ -204,7 +216,7 @@
   function logout(expired) {
     if (token && !expired) { fetch(API_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action: "admin.logout", token }) }).catch(() => {}); }
     token = null; ssSet(TOKEN_KEY, null);
-    boot = stats = results = bank = null;
+    boot = stats = results = bank = accounts = logs = null;
     closeModal();
     renderLogin(expired ? "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại." : "");
   }
@@ -216,13 +228,22 @@
   }
 
   /* ============================== KHUNG TRANG ============================== */
+  function allowedTabs() {
+    const all = [["overview", "📊 Tổng quan & Báo cáo"], ["results", "📝 Bài thi & Chấm điểm"], ["bank", "📚 Ngân hàng đề"], ["periods", "🗓️ Đợt thi"],
+      ["accounts", "👤 Tài khoản"], ["log", "📜 Nhật ký"]];
+    return isMgr() ? all : all.filter(t => t[0] === "results");   // Người chấm chỉ chấm bài
+  }
   function renderShell() {
-    const tabs = [["overview", "📊 Tổng quan & Báo cáo"], ["results", "📝 Bài thi & Chấm điểm"], ["bank", "📚 Ngân hàng đề"], ["periods", "🗓️ Đợt thi"]];
+    const tabs = allowedTabs();
+    if (!tabs.some(t => t[0] === tab)) { tab = tabs[0][0]; ssSet("ts_admin_tab", tab); }
+    const u = me();
     root.innerHTML = `<div class="wrap">
       <div class="top">
         <div class="brand">THE STREET<small>QUẢN TRỊ THI TĂNG CẤP</small></div>
         <div class="right">
           <span class="badge ${boot.pending ? "b-wait" : "b-ok"}">${boot.pending ? "⏳ " + boot.pending + " bài chờ chấm" : "✓ Đã chấm hết"}</span>
+          <span class="who" title="Tên đăng nhập: ${esc(u.username)}">👤 <b>${esc(u.name)}</b> · ${esc(u.roleLabel || "")}</span>
+          ${isMaster() ? "" : '<button class="btn sm" id="pw">Đổi mật khẩu</button>'}
           <button class="btn sm" id="rf">↻ Tải lại</button>
           <button class="btn sm danger" id="lo">Đăng xuất</button>
         </div>
@@ -232,7 +253,8 @@
     </div>`;
     $$("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; ssSet("ts_admin_tab", tab); renderShell(); });
     $("#lo").onclick = () => logout(false);
-    $("#rf").onclick = () => run(async () => { stats = results = bank = null; await loadBoot(); });
+    const pwb = $("#pw"); if (pwb) pwb.onclick = changePassword;
+    $("#rf").onclick = () => run(async () => { stats = results = bank = accounts = logs = null; await loadBoot(); });
     renderTab();
   }
 
@@ -240,6 +262,8 @@
     if (tab === "overview") return renderOverview();
     if (tab === "results") return renderResults();
     if (tab === "bank") return renderBank();
+    if (tab === "accounts") return renderAccounts();
+    if (tab === "log") return renderLog();
     return renderPeriods();
   }
 
@@ -428,6 +452,10 @@
     const essays = data ? data.essay : [{ q: "Tự luận (bài thi phiên bản cũ — chấm tổng điểm tự luận)", points: 10, answer: it.essaysText.filter(Boolean).join("\n\n———\n\n") || "(không có dữ liệu)" }];
     const scores = Array.isArray(it.essayScores) ? it.essayScores.slice() : (it.graded && !data ? [it.essayScore] : essays.map(() => null));
     const grader = it.grader || lsGet("ts_admin_grader") || "";
+    // Tài khoản riêng: người chấm là chủ tài khoản. Quản trị chính (dùng chung) gõ tên người chấm.
+    const graderField = isMaster()
+      ? `<input type="text" id="gname" value="${esc(grader)}" placeholder="Tên người chấm">`
+      : `<div style="padding-top:6px"><b>${esc(me().name)}</b> <span class="muted">(theo tài khoản đăng nhập)</span></div>`;
 
     const mcqHTML = data ? data.mcq.map((q, i) => {
       const ok = q.chosen === q.correct;
@@ -462,13 +490,13 @@
       ${essayHTML}
       <div class="sumbox" id="sumbox"></div>
       <div class="row2">
-        <div class="field"><label>Người chấm *</label><input type="text" id="gname" value="${esc(grader)}" placeholder="Tên người chấm"></div>
+        <div class="field"><label>Người chấm *</label>${graderField}</div>
         <div class="field"><label>Kết quả hiện tại</label><div style="padding-top:6px">${resultBadge(it)}${it.gradedAt ? ` <span class="muted">chấm lúc ${fmtDate(it.gradedAt)} bởi ${esc(it.grader)}</span>` : ""}</div></div>
       </div>
       <div class="field"><label>Nhận xét</label><textarea id="gnote" placeholder="Nhận xét chi tiết cho nhân viên...">${esc(it.note)}</textarea></div>`;
 
     const footer = `
-      <button class="btn danger" id="greset" style="margin-right:auto">Cho thi lại</button>
+      ${isMgr() ? '<button class="btn danger" id="greset" style="margin-right:auto">Cho thi lại</button>' : '<span style="margin-right:auto"></span>'}
       <button class="btn" id="gpdf">⬇ Phiếu điểm PDF</button>
       <button class="btn" id="gsave">Lưu điểm</button>
       <button class="btn pri" id="gnext">Lưu & bài chờ chấm tiếp →</button>`;
@@ -500,19 +528,19 @@
 
     async function save(goNext) {
       const sc = readScores();
-      const gname = $("#gname", m).value.trim();
+      const gname = isMaster() ? $("#gname", m).value.trim() : me().name;
       if (!gname) { toast("Vui lòng nhập tên người chấm.", true); $("#gname", m).focus(); return; }
       for (let i = 0; i < sc.length; i++) {
         if (sc[i] === null || isNaN(sc[i]) || sc[i] < 0 || sc[i] > essays[i].points) { toast(`Điểm câu tự luận ${i + 1} phải từ 0 đến ${essays[i].points}.`, true); return; }
       }
-      lsSet("ts_admin_grader", gname);
+      if (isMaster()) lsSet("ts_admin_grader", gname);
       const d = await run(() => api("admin.results.grade", { key: it.key, empId: it.empId, essayScores: sc, grader: gname, note: $("#gnote", m).value }));
       if (!d) return;
       const idx = (results || []).findIndex(r => r.key === it.key);
       const wasPending = !it.graded;
       if (idx >= 0) results[idx] = d.summary;
       if (wasPending && boot.pending) boot.pending--;
-      stats = null;
+      stats = null; logs = null;
       toast("Đã lưu điểm cho " + it.name + ".");
       const top = $(".top .badge"); if (top) top.outerHTML = `<span class="badge ${boot.pending ? "b-wait" : "b-ok"}">${boot.pending ? "⏳ " + boot.pending + " bài chờ chấm" : "✓ Đã chấm hết"}</span>`;
       drawResults();
@@ -528,8 +556,8 @@
     $("#gsave", m).onclick = () => save(false);
     $("#gnext", m).onclick = () => save(true);
     $("#gpdf", m).onclick = () => downloadPdf(it);
-    $("#greset", m).onclick = async () => {
-      if (!confirm(`Cho ${it.name} (${it.empId}) thi lại?\n\nBài thi này sẽ bị XÓA VĨNH VIỄN khỏi hệ thống để nhân viên làm bài mới. Nên tải phiếu điểm PDF trước nếu cần lưu lại.`)) return;
+    if ($("#greset", m)) $("#greset", m).onclick = async () => {
+      if (!confirm(`Cho ${it.name} (${it.empId}) thi lại?\n\nBài thi này sẽ bị xóa khỏi danh sách để nhân viên làm bài mới. Điểm và kết quả cũ được lưu lại trong Nhật ký. Nên tải phiếu điểm PDF trước nếu cần bản đầy đủ.`)) return;
       const d = await run(() => api("admin.results.reset", { key: it.key, empId: it.empId }));
       if (!d) return;
       results = (results || []).filter(r => r.key !== it.key);
@@ -796,6 +824,212 @@
       closeModal();
       toast("Đã lưu đợt thi.");
       await loadBoot();
+    });
+  }
+
+  /* ============================== TÀI KHOẢN ============================== */
+  async function renderAccounts() {
+    const main = $("#main");
+    main.innerHTML = `<div class="card">
+      <div class="card-h"><h3>Tài khoản quản trị</h3><button class="btn pri" id="anew">+ Thêm tài khoản</button></div>
+      <p class="muted" style="margin:-4px 0 12px">Mỗi người dùng một tài khoản riêng để biết chính xác ai chấm bài, ai sửa đề.
+        <b>Quản lý</b> dùng được mọi chức năng. <b>Người chấm</b> chỉ xem, chấm bài tự luận và tải phiếu điểm.
+        Tài khoản <b>admin</b> (quản trị chính) dùng mật khẩu cài trong Apps Script, không hiện ở đây.</p>
+      <div id="alist"><div class="empty">⏳ Đang tải danh sách tài khoản...</div></div></div>`;
+    $("#anew").onclick = () => editAccount(null);
+    if (!accounts) {
+      const d = await run(() => api("admin.accounts.list"));
+      if (!d) return;
+      accounts = d.accounts;
+    }
+    if (tab !== "accounts") return;
+    drawAccounts();
+  }
+
+  function drawAccounts() {
+    const el = $("#alist");
+    if (!el) return;
+    if (!accounts.length) { el.innerHTML = '<div class="empty">Chưa có tài khoản riêng nào. Bấm "+ Thêm tài khoản" để tạo cho từng người chấm / quản lý.</div>'; return; }
+    el.innerHTML = `<div class="tbl-wrap"><table>
+      <thead><tr><th>Tên đăng nhập</th><th>Họ tên</th><th>Vai trò</th><th>Trạng thái</th><th>Đăng nhập gần nhất</th><th></th></tr></thead>
+      <tbody>${accounts.map((a, i) => `<tr data-i="${i}" style="${a.active ? "" : "opacity:.6"}">
+        <td><b>${esc(a.username)}</b>${a.username === me().username ? ' <span class="muted">(bạn)</span>' : ""}</td><td>${esc(a.name)}</td>
+        <td>${a.role === "quanly" ? '<span class="badge b-ok">Quản lý</span>' : '<span class="badge b-wait">Người chấm</span>'}</td>
+        <td>${a.active ? '<span class="badge b-ok">Đang dùng</span>' : '<span class="badge b-gray">Đã khóa</span>'}</td>
+        <td style="white-space:nowrap">${a.lastLogin ? fmtDate(a.lastLogin) : '<span class="muted">Chưa đăng nhập</span>'}</td>
+        <td style="white-space:nowrap"><button class="btn sm" data-act="edit">Sửa</button>${a.username === me().username ? "" : ` <button class="btn sm" data-act="lock">${a.active ? "Khóa" : "Mở khóa"}</button> <button class="btn sm danger" data-act="del">Xóa</button>`}</td></tr>`).join("")}</tbody></table></div>`;
+    $$("tr[data-i]", el).forEach(tr => {
+      const a = accounts[Number(tr.dataset.i)];
+      $('[data-act="edit"]', tr).onclick = () => editAccount(a);
+      const lock = $('[data-act="lock"]', tr);
+      if (lock) lock.onclick = () => run(async () => {
+        if (a.active && !confirm(`Khóa tài khoản ${a.username} (${a.name})?\n\nNgười này bị đăng xuất ngay và không đăng nhập được nữa cho đến khi mở khóa.`)) return;
+        const d = await api("admin.accounts.save", { account: { originalUsername: a.username, username: a.username, name: a.name, role: a.role, active: !a.active } });
+        accounts = d.accounts; drawAccounts();
+        toast(a.active ? "Đã khóa tài khoản " + a.username + "." : "Đã mở khóa tài khoản " + a.username + ".");
+      });
+      const del = $('[data-act="del"]', tr);
+      if (del) del.onclick = () => run(async () => {
+        if (!confirm(`Xóa vĩnh viễn tài khoản ${a.username} (${a.name})?\n\nNhật ký và các bài đã chấm vẫn giữ tên người này. Nếu chỉ muốn tạm ngừng, hãy bấm "Khóa".`)) return;
+        const d = await api("admin.accounts.delete", { username: a.username });
+        accounts = d.accounts; drawAccounts();
+        toast("Đã xóa tài khoản " + a.username + ".");
+      });
+    });
+  }
+
+  function editAccount(a, draft) {
+    const x = draft || a || { username: "", name: "", role: "chamthi", active: true };
+    const self = a && a.username === me().username;
+    const body = `
+      <div class="row2">
+        <div class="field"><label>Tên đăng nhập *</label><input type="text" id="auser" value="${esc(x.username)}" maxlength="30" placeholder="VD: lan.nguyen" autocapitalize="off" spellcheck="false">
+          <div class="muted">Chữ không dấu, số và dấu . _ -</div></div>
+        <div class="field"><label>Họ tên *</label><input type="text" id="aname" value="${esc(x.name)}" maxlength="100" placeholder="Tên hiện trên bài chấm và nhật ký"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Vai trò *</label><select id="arole"${self ? " disabled" : ""}>
+          <option value="chamthi"${x.role === "chamthi" ? " selected" : ""}>Người chấm — chỉ xem và chấm bài</option>
+          <option value="quanly"${x.role === "quanly" ? " selected" : ""}>Quản lý — dùng mọi chức năng</option></select></div>
+        <div class="field"><label>Trạng thái</label><select id="aact"${self ? " disabled" : ""}><option value="1"${x.active ? " selected" : ""}>Đang dùng</option><option value="0"${x.active ? "" : " selected"}>Khóa</option></select></div>
+      </div>
+      <div class="field"><label>${a ? "Đặt lại mật khẩu (để trống nếu không đổi)" : "Mật khẩu *"}</label><input type="password" id="apass" autocomplete="new-password" placeholder="Ít nhất 6 ký tự"></div>
+      ${a ? '<p class="muted">Đổi vai trò, khóa hoặc đặt lại mật khẩu sẽ đăng xuất người này khỏi mọi thiết bị.</p>' : '<p class="muted">Gửi tên đăng nhập và mật khẩu cho người dùng. Họ có thể tự đổi mật khẩu sau khi đăng nhập.</p>'}`;
+    const m = openModal(a ? "Sửa tài khoản " + esc(a.username) : "Thêm tài khoản", body,
+      `<button class="btn" data-close>Hủy</button><button class="btn pri" id="asave">Lưu tài khoản</button>`);
+    $("#asave", m).onclick = async () => {
+      const acc = {
+        originalUsername: a ? a.username : "", username: $("#auser", m).value.trim().toLowerCase(), name: $("#aname", m).value.trim(),
+        role: $("#arole", m).value, active: $("#aact", m).value === "1", password: $("#apass", m).value
+      };
+      let err = "";
+      if (!/^[a-z0-9._-]{3,30}$/.test(acc.username)) err = "Tên đăng nhập 3–30 ký tự, chỉ gồm chữ không dấu, số và dấu . _ -";
+      else if (acc.username === "admin") err = "Tên \"admin\" dành cho quản trị chính, hãy chọn tên khác.";
+      else if (!acc.name) err = "Vui lòng nhập họ tên.";
+      else if (!a && !acc.password) err = "Vui lòng đặt mật khẩu cho tài khoản mới.";
+      else if (acc.password && acc.password.length < 6) err = "Mật khẩu cần ít nhất 6 ký tự.";
+      if (err) { toast(err, true); return; }
+      $("#asave", m).disabled = true;
+      try {
+        const d = await api("admin.accounts.save", { account: acc });
+        accounts = d.accounts;
+        closeModal(); drawAccounts();
+        toast(a ? "Đã cập nhật tài khoản " + acc.username + "." : "Đã tạo tài khoản " + acc.username + ".");
+      } catch (e) {
+        toast(e.message, true);
+        $("#asave", m).disabled = false;
+      }
+    };
+  }
+
+  function changePassword() {
+    const body = `
+      <div class="field"><label>Mật khẩu hiện tại *</label><input type="password" id="opw" autocomplete="current-password"></div>
+      <div class="field"><label>Mật khẩu mới *</label><input type="password" id="npw" autocomplete="new-password" placeholder="Ít nhất 6 ký tự"></div>
+      <div class="field"><label>Nhập lại mật khẩu mới *</label><input type="password" id="npw2" autocomplete="new-password"></div>
+      <p class="muted">Các thiết bị khác đang đăng nhập tài khoản này sẽ bị đăng xuất.</p>`;
+    const m = openModal("Đổi mật khẩu", body, `<button class="btn" data-close>Hủy</button><button class="btn pri" id="pwsave">Đổi mật khẩu</button>`);
+    $("#opw", m).focus();
+    $("#pwsave", m).onclick = async () => {
+      const o = $("#opw", m).value, n = $("#npw", m).value;
+      if (!o) return toast("Vui lòng nhập mật khẩu hiện tại.", true);
+      if (n.length < 6) return toast("Mật khẩu mới cần ít nhất 6 ký tự.", true);
+      if (n !== $("#npw2", m).value) return toast("Hai lần nhập mật khẩu mới không khớp.", true);
+      $("#pwsave", m).disabled = true;
+      try {
+        await api("admin.account.password", { oldPassword: o, newPassword: n });
+        closeModal(); toast("Đã đổi mật khẩu.");
+      } catch (e) { toast(e.message, true); $("#pwsave", m).disabled = false; }
+    };
+  }
+
+  /* ============================== NHẬT KÝ ============================== */
+  const LOG_GROUPS = [
+    ["", "Mọi hành động"], ["grade", "Chấm / sửa điểm"], ["reset", "Cho thi lại"], ["bank", "Ngân hàng đề"],
+    ["period", "Đợt thi"], ["account", "Tài khoản & mật khẩu"], ["login", "Đăng nhập / đăng xuất"], ["export", "Xuất Excel / PDF"]
+  ];
+  function logGroup(action) {
+    if (/điểm|Chấm bài/.test(action) && !/phiếu/.test(action)) return "grade";
+    if (/thi lại/.test(action)) return "reset";
+    if (/câu hỏi/.test(action)) return "bank";
+    if (/đợt thi/.test(action)) return "period";
+    if (/tài khoản|mật khẩu/i.test(action)) return "account";
+    if (/Đăng/.test(action)) return "login";
+    if (/Xuất|Tải/.test(action)) return "export";
+    return "";
+  }
+  function logBadge(action) {
+    const g = logGroup(action);
+    const cls = /Xóa|thi lại|sai|Khóa/.test(action) ? "b-bad" : (g === "grade" ? "b-ok" : (g === "login" || g === "export" ? "b-gray" : "b-wait"));
+    return `<span class="badge ${cls}">${esc(action)}</span>`;
+  }
+
+  async function renderLog() {
+    const main = $("#main");
+    main.innerHTML = `<div class="card">
+      <div class="card-h"><h3>Nhật ký thao tác</h3><button class="btn" id="lxl">⬇ Xuất Excel</button></div>
+      <p class="muted" style="margin:-4px 0 12px">Ghi lại ai làm gì, lúc nào: chấm bài, sửa điểm, cho thi lại, sửa đề, sửa đợt thi, tài khoản, đăng nhập. Nhật ký không sửa hay xóa được từ trang quản trị.</p>
+      <div class="bar">
+        <select id="luser"><option value="">Mọi người</option></select>
+        <select id="lact">${LOG_GROUPS.map(g => `<option value="${g[0]}"${lFilter.action === g[0] ? " selected" : ""}>${g[1]}</option>`).join("")}</select>
+        <input type="text" id="lq" placeholder="Tìm tên nhân viên, mã câu, kỳ thi..." value="${esc(lFilter.q)}">
+      </div>
+      <div id="llist"><div class="empty">⏳ Đang tải nhật ký...</div></div></div>`;
+    $("#lact").onchange = e => { lFilter.action = e.target.value; lFilter.limit = 100; drawLog(); };
+    $("#lq").oninput = e => { lFilter.q = e.target.value; lFilter.limit = 100; drawLog(); };
+    $("#luser").onchange = e => { lFilter.user = e.target.value; lFilter.limit = 100; drawLog(); };
+    $("#lxl").onclick = exportLog;
+    // Luôn tải mới khi mở tab để thấy thao tác vừa làm
+    const d = await run(() => api("admin.log.list"));
+    if (!d) return;
+    logs = d.logs; logTotal = d.total;
+    if (tab !== "log") return;
+    const users = {};
+    logs.forEach(l => { if (l.username && !users[l.username]) users[l.username] = l.name || l.username; });
+    $("#luser").innerHTML = '<option value="">Mọi người</option>' + Object.keys(users).sort().map(u =>
+      `<option value="${esc(u)}"${lFilter.user === u ? " selected" : ""}>${esc(users[u])}${users[u] !== u ? " (" + esc(u) + ")" : ""}</option>`).join("");
+    drawLog();
+  }
+
+  function filteredLogs() {
+    const q = norm(lFilter.q.trim());
+    return (logs || []).filter(l =>
+      (!lFilter.user || l.username === lFilter.user) && (!lFilter.action || logGroup(l.action) === lFilter.action) &&
+      (!q || norm(l.target + " " + l.detail + " " + l.name + " " + l.action).includes(q)));
+  }
+
+  function drawLog() {
+    const el = $("#llist");
+    if (!el || !logs) return;
+    const list = filteredLogs();
+    if (!list.length) { el.innerHTML = '<div class="empty">Không có dòng nhật ký nào khớp bộ lọc.</div>'; return; }
+    const shown = list.slice(0, lFilter.limit);
+    el.innerHTML = `<p class="muted" style="margin:0 0 8px">${list.length} dòng${logTotal > logs.length ? ` · đang xem ${logs.length} dòng gần nhất trên tổng ${logTotal}` : ""}</p>
+      <div class="tbl-wrap"><table>
+      <thead><tr><th>Thời gian</th><th>Người thực hiện</th><th>Hành động</th><th>Đối tượng</th><th>Chi tiết</th></tr></thead>
+      <tbody>${shown.map(l => `<tr>
+        <td style="white-space:nowrap">${fmtDate(l.time)}</td>
+        <td><b>${esc(l.name || l.username)}</b>${l.name && l.name !== l.username ? `<div class="muted">${esc(l.username)}</div>` : ""}</td>
+        <td>${logBadge(l.action)}</td><td>${esc(l.target)}</td>
+        <td><div class="log-detail">${esc(l.detail)}</div></td></tr>`).join("")}</tbody></table></div>
+      ${list.length > shown.length ? `<div style="margin-top:10px"><button class="btn sm" id="lmore">Xem thêm ${Math.min(100, list.length - shown.length)} dòng</button></div>` : ""}`;
+    const more = $("#lmore"); if (more) more.onclick = () => { lFilter.limit += 100; drawLog(); };
+  }
+
+  async function exportLog() {
+    await run(async () => {
+      if (!logs) return;
+      await loadScript(XLSX_CDN);
+      const X = window.XLSX;
+      const rows = [["Thời gian", "Tên đăng nhập", "Họ tên", "Hành động", "Đối tượng", "Chi tiết"]]
+        .concat(filteredLogs().map(l => [fmtDate(l.time), l.username, l.name, l.action, l.target, l.detail]));
+      const ws = X.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [17, 16, 22, 20, 40, 80].map(w => ({ wch: w }));
+      const wb = X.utils.book_new();
+      X.utils.book_append_sheet(wb, ws, "Nhật ký");
+      const now = new Date();
+      X.writeFile(wb, "NhatKy_" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + ".xlsx");
+      toast("Đã xuất " + (rows.length - 1) + " dòng nhật ký ra Excel.");
     });
   }
 
