@@ -34,6 +34,7 @@ URL công khai: `https://thestreet-admin.github.io/thestreet-web/admin/admin.js`
 Trang thi: `GET` (danh sách đợt thi đang mở), `start`, `submit`.
 Quản trị (cần `token` từ `admin.login {username, password}`; tên `admin` hoặc để trống = quản trị chính): `admin.bootstrap` (trả kèm `me` = người đang đăng nhập), `admin.bank.list|save|toggle|delete`, `admin.periods.save|delete`,
 `admin.results.list|get|grade|reset|release`, `admin.bank.import`, `admin.reports.stats|export|pdf`, `admin.accounts.list|save|delete`, `admin.account.password`, `admin.log.list`, `admin.logout`.
+- `admin.reports.stats` và `admin.reports.export` trả kèm `trend`: mỗi đợt có bài nộp một dòng (xếp theo giờ mở đợt), gồm `count, graded, passed, passRate, avgPct, avgMcqPct, passPct, byPosition{<vị trí>: …}`; luôn tính mọi đợt, không theo bộ lọc. Tab Tổng quan vẽ biểu đồ xu hướng bằng SVG tự viết (`drawTrend`), không dùng thư viện.
 - `admin.results.list {voided: true}` = bài đã hủy khi cho thi lại (mã `huy:…`, chỉ xem/PDF). `admin.results.reset` gửi kèm `reason`.
 - `admin.results.get` trả `guides` (đáp án mẫu theo mã câu tự luận), `version`, `editing` (người khác đang mở bài). `admin.results.grade` gửi `expectVersion`; lỗi `CONFLICT` → hỏi người dùng, đồng ý thì gửi lại với `force: true`. Đóng modal chấm → `admin.results.release`.
 - Nhập Excel ngân hàng đề đọc file ở trình duyệt (thư viện xlsx từ CDN; file .csv đọc dạng chữ UTF-8), kiểm tra từng dòng, có lỗi thì không gửi. Kiểm thử chạy offline: đặt `XLSX_LOCAL=<đường dẫn xlsx.full.min.js>`.

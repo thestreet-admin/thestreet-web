@@ -117,3 +117,28 @@
 #ts-admin-app .guide div{white-space:pre-wrap;margin-top:6px;font-size:13px;color:var(--ink)}
 #ts-admin-app .warnbox{background:var(--ambl);color:var(--amb);border:1px solid #f3d29a}
 #ts-admin-app tr.row-err td{background:#fff6f5}
+#ts-admin-app .seg{display:flex;gap:4px;flex-wrap:wrap}
+#ts-admin-app .seg .btn.on{background:var(--g);color:#fff}
+#ts-admin-app .legend{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+#ts-admin-app .legend .lg{display:inline-flex;align-items:center;gap:6px;border:1.5px solid var(--line);background:#fff;border-radius:99px;padding:4px 10px;font-size:12px;font-weight:700;color:var(--ink2);cursor:pointer}
+#ts-admin-app .legend .lg i{display:inline-block;width:16px;border-radius:2px}
+#ts-admin-app .legend .lg.off{opacity:.45;text-decoration:line-through}
+#ts-admin-app .chart-wrap{position:relative;overflow-x:auto;-webkit-overflow-scrolling:touch}
+#ts-admin-app .trend-svg{display:block;max-width:none;height:auto;touch-action:pan-x}
+#ts-admin-app .trend-svg .grid{stroke:#e6ebe5;stroke-width:1}
+#ts-admin-app .trend-svg .ax{fill:var(--mut);font-size:11px}
+#ts-admin-app .trend-svg .ax.cur{fill:var(--g);font-weight:700}
+#ts-admin-app .trend-svg .dl{fill:var(--ink);font-size:12px;font-weight:700;paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}
+#ts-admin-app .trend-svg .dots circle{stroke:#fff;stroke-width:2}
+#ts-admin-app .trend-svg .selband{fill:var(--gl)}
+#ts-admin-app .trend-svg .xh{stroke:#9aa59a;stroke-width:1;stroke-dasharray:3 3}
+#ts-admin-app .trend-svg .hit{cursor:pointer}
+#ts-admin-app .chart-wrap .tip{position:absolute;top:8px;min-width:170px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 10px;box-shadow:0 4px 16px rgba(0,0,0,.12);font-size:12px;pointer-events:none;z-index:2}
+#ts-admin-app .chart-wrap .tip .tt{font-weight:700;color:var(--ink)}
+#ts-admin-app .chart-wrap .tip .tr{display:flex;align-items:center;gap:6px;margin-top:3px}
+#ts-admin-app .chart-wrap .tip .tr i{display:inline-block;width:12px;height:3px;border-radius:2px}
+#ts-admin-app .chart-wrap .tip .tr b{min-width:44px;color:var(--ink);font-variant-numeric:tabular-nums}
+#ts-admin-app .chart-wrap .tip .tr span{color:var(--ink2)}
+#ts-admin-app .trend-tbl{margin-top:8px}
+#ts-admin-app .trend-tbl summary{cursor:pointer;font-weight:700;color:var(--g);font-size:13px}
+#ts-admin-app #trend{text-align:left}

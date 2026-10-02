@@ -29,6 +29,12 @@ def serve_repo(route):
     route.fulfill(status=200, content_type=ctype, body=f.read_text(encoding="utf-8"))
 
 STATS = {"overall": {"count": 0, "graded": 0, "pending": 0, "passed": 0, "passRate": None, "avgPct": None, "avgMcqPct": None}, "byPosition": [], "questions": [], "essays": []}
+def _tp(count, graded, passed, rate, avg, mcq, **kw): return dict(count=count, graded=graded, passed=passed, passRate=rate, avgPct=avg, avgMcqPct=mcq, **kw)
+TREND = [
+    _tp(12, 12, 6, 50, 58.2, 61, name="Quý 2/2026", passPct=60, byPosition={"Phục Vụ": _tp(8, 8, 3, 37.5, 52, 55), "Lễ Tân": _tp(4, 4, 3, 75, 70, 73)}),
+    _tp(15, 14, 9, 64.29, 66.1, 68, name="Quý 3/2026", passPct=60, byPosition={"Phục Vụ": _tp(9, 9, 6, 66.67, 65, 66), "Lễ Tân": _tp(6, 5, 3, 60, 68, 71)}),
+    _tp(10, 6, 5, 83.33, 74.5, 72, name="Đợt dài", passPct=70, byPosition={"Phục Vụ": _tp(6, 4, 4, 100, 80, 75), "Pha Chế": _tp(4, 2, 1, 50, 63.5, 67)}),
+]
 BANK_META = {"bank": [{"positionId": "phucvu", "label": "Phục Vụ", "total": 14, "activeTN": 10, "activeTL": 4}], "bankIssues": {"noIdRows": [], "duplicateIds": []}}
 PERIODS = [{"name": "Đợt dài", "opensAt": None, "closesAt": None, "duration": 60, "passPct": 70, "note": "", "mcqCount": 12, "essayCount": 4, "status": "open", "submitted": 0, "started": 0}]
 SAVED = []
@@ -82,7 +88,7 @@ def api(route):
     elif a == "admin.bank.import":
         IMPORTED.append(b["questions"]); r = dict(result="success", added=1, updated=1, unchanged=0, **BANK_META)
     elif a == "admin.periods.save": SAVED.append(b["period"])
-    elif a == "admin.reports.stats": r = {"result": "success", "stats": STATS}
+    elif a == "admin.reports.stats": r = {"result": "success", "stats": STATS, "trend": TREND}
     elif a == "admin.bank.list": r = {"result": "success", "questions": BANK}
     elif a == "start": r = {"result": "success", "sessionId": "s1", "name": b["name"], "empId": b["empId"], "positionId": "phucvu", "positionLabel": "Phục Vụ", "period": b["period"], "startedAt": 0, "endsAt": 45 * 60000, "serverNow": 0,
                             "mcq": [{"id": f"PV-TN-{i:03d}", "q": f"Câu {i}", "points": 3, "options": ["a", "b", "c", "d"]} for i in range(1, 11)],
@@ -113,6 +119,27 @@ def main():
         assert "gradient" in bg, "CSS chưa nạp: " + bg
         vis.locator("#lp").fill("pw"); vis.locator("#lb").click(); pg.wait_for_timeout(1000)
         assert "Tổng quan" in vis.inner_text()
+        # Biểu đồ xu hướng qua các đợt
+        tr = vis.locator("#trend")
+        assert tr.locator("svg.trend-svg").count() == 1 and "Quý 2/2026" in tr.inner_text(), tr.inner_text()[:300]
+        assert tr.locator("svg path").count() == 4, "Tất cả + 3 vị trí có bài"
+        pg.wait_for_timeout(200)
+        tr.screenshot(path=os.environ.get("SHOT_DIR", "/tmp") + "/xu-huong.png")
+        box = tr.locator("svg.trend-svg").bounding_box()
+        pg.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + box["height"] * 0.4); pg.wait_for_timeout(200)
+        tip = tr.locator(".tip").inner_text()
+        assert "Quý 3/2026" in tip and "64,3%" in tip and "66,7%" in tip and "15 bài" in tip, tip
+        tr.locator("[data-series='Phục Vụ']").click()
+        assert tr.locator("svg path").count() == 3 and "off" in tr.locator("[data-series='Phục Vụ']").get_attribute("class")
+        tr.locator("[data-metric=avgPct]").click()
+        tr.locator("summary").click()
+        assert "74,5%" in tr.locator("table").inner_text() and "Điểm TB tổng" in tr.inner_text()
+        assert tr.locator("svg path").count() == 3, "giữ lựa chọn ẩn/hiện khi đổi chỉ số"
+        pg.mouse.move(box["x"] + box["width"] * 0.97, box["y"] + box["height"] * 0.4); pg.mouse.down(); pg.mouse.up(); pg.wait_for_timeout(600)
+        assert vis.locator("#ovp").input_value() == "Đợt dài", "bấm vào đợt trên biểu đồ → lọc theo đợt đó"
+        assert "cur" in vis.locator("#trend text.ax.cur").get_attribute("class")
+        vis.locator("#ovp").select_option(""); pg.wait_for_timeout(500)
+        print("✓ Tổng quan: biểu đồ xu hướng qua các đợt (đổi chỉ số, ẩn/hiện vị trí, di chuột xem số, bấm để lọc đợt)")
         vis.locator("[data-tab=bank]").click(); pg.wait_for_timeout(500)
         assert "Phục Vụ" in vis.inner_text()
         assert "cần tối thiểu 12 TN" in vis.inner_text(), "cảnh báo thiếu câu theo đợt thi đang mở"
