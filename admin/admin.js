@@ -551,12 +551,12 @@
   /* ============================== NGÂN HÀNG ĐỀ ============================== */
   async function renderBank() {
     const main = $("#main");
-    const need = boot.config;
+    const need = bankNeed();
     main.innerHTML = `
       <div id="bmeta">${bankMetaHTML()}</div>
       <div class="card">
         <div class="card-h"><h3>Ngân hàng đề</h3><button class="btn pri" id="bnew">+ Thêm câu hỏi</button></div>
-        <p class="muted" style="margin:-4px 0 12px">Mỗi lượt thi, hệ thống rút ngẫu nhiên ${need.mcqCount} câu trắc nghiệm và ${need.essayCount} câu tự luận đang dùng của vị trí đó. Kho càng nhiều câu, đề giữa các nhân viên càng khác nhau.</p>
+        <p class="muted" style="margin:-4px 0 12px">Mỗi lượt thi, hệ thống rút ngẫu nhiên số câu trắc nghiệm và tự luận đang dùng của vị trí đó theo cài đặt của đợt thi (mặc định ${boot.config.mcqCount} TN + ${boot.config.essayCount} TL; các đợt chưa đóng hiện cần tối đa ${need.mcqCount} TN + ${need.essayCount} TL). Kho càng nhiều câu, đề giữa các nhân viên càng khác nhau.</p>
         <div class="bar">
           <select id="bpos"><option value="">Mọi vị trí</option>${boot.positions.map(p => `<option value="${p.id}"${bFilter.position === p.id ? " selected" : ""}>${esc(p.label)}</option>`).join("")}</select>
           <select id="btype"><option value="">Mọi loại</option><option value="TN"${bFilter.type === "TN" ? " selected" : ""}>Trắc nghiệm</option><option value="TL"${bFilter.type === "TL" ? " selected" : ""}>Tự luận</option></select>
@@ -633,8 +633,18 @@
     });
   }
 
+  // Số câu tối thiểu mỗi vị trí cần có: lớn nhất trong các đợt thi chưa đóng (không có đợt nào thì lấy mặc định)
+  function bankNeed() {
+    const live = boot.periods.filter(p => p.status !== "closed");
+    if (!live.length) return { mcqCount: boot.config.mcqCount, essayCount: boot.config.essayCount };
+    return {
+      mcqCount: Math.max(...live.map(p => p.mcqCount || boot.config.mcqCount)),
+      essayCount: Math.max(...live.map(p => p.essayCount || boot.config.essayCount))
+    };
+  }
+
   function bankMetaHTML() {
-    const need = boot.config;
+    const need = bankNeed();
     return `<div class="chips">${boot.bank.map(b => {
         const warn = b.activeTN < need.mcqCount || b.activeTL < need.essayCount;
         return `<div class="chip${warn ? " warn" : ""}"><b>${esc(b.label)}</b>: ${b.activeTN} TN · ${b.activeTL} TL đang dùng${warn ? ` — ⚠️ cần tối thiểu ${need.mcqCount} TN và ${need.essayCount} TL` : ""}</div>`;
@@ -722,11 +732,12 @@
       <div class="card-h"><h3>Đợt thi</h3><button class="btn pri" id="pnew">+ Thêm đợt thi</button></div>
       <p class="muted" style="margin:-4px 0 12px">Trang thi chỉ hiện các đợt <b>đang mở</b>. Để trống giờ mở/đóng nghĩa là không giới hạn. Nhân viên đã bắt đầu trước giờ đóng vẫn được làm đủ thời gian.</p>
       ${list.length ? `<div class="tbl-wrap"><table>
-        <thead><tr><th>Tên kỳ thi</th><th>Mở lúc</th><th>Đóng lúc</th><th class="num">Thời gian</th><th class="num">Điểm đạt</th><th>Trạng thái</th><th class="num">Đã nộp</th><th></th></tr></thead>
+        <thead><tr><th>Tên kỳ thi</th><th>Mở lúc</th><th>Đóng lúc</th><th class="num">Số câu</th><th class="num">Thời gian</th><th class="num">Điểm đạt</th><th>Trạng thái</th><th class="num">Đã nộp</th><th></th></tr></thead>
         <tbody>${list.map((p, i) => `<tr data-i="${i}">
           <td><b>${esc(p.name)}</b>${p.note ? `<div class="muted">${esc(p.note)}</div>` : ""}</td>
           <td style="white-space:nowrap">${p.opensAt ? fmtDate(p.opensAt) : '<span class="muted">Không giới hạn</span>'}</td>
           <td style="white-space:nowrap">${p.closesAt ? fmtDate(p.closesAt) : '<span class="muted">Không giới hạn</span>'}</td>
+          <td class="num" style="white-space:nowrap">${p.mcqCount || boot.config.mcqCount} TN + ${p.essayCount || boot.config.essayCount} TL</td>
           <td class="num">${p.duration} phút</td><td class="num">${p.passPct}%</td>
           <td>${periodStatusBadge(p.status)}</td>
           <td class="num">${p.submitted}${p.started > p.submitted ? ` <span class="muted">(+${p.started - p.submitted} đang thi)</span>` : ""}</td>
@@ -748,7 +759,8 @@
   }
 
   function editPeriod(p) {
-    const x = p || { name: "", opensAt: null, closesAt: null, duration: boot.config.defaultDuration, passPct: boot.config.defaultPassPct, note: "", started: 0 };
+    const x = p || { name: "", opensAt: null, closesAt: null, duration: boot.config.defaultDuration, passPct: boot.config.defaultPassPct,
+      mcqCount: boot.config.mcqCount, essayCount: boot.config.essayCount, note: "", started: 0 };
     const lockName = p && p.started > 0;
     const body = `
       <div class="field"><label>Tên kỳ thi *</label><input type="text" id="pname" value="${esc(x.name)}" maxlength="100" placeholder="VD: Thi tăng cấp Quý 4/2026"${lockName ? " disabled" : ""}>
@@ -761,6 +773,11 @@
         <div class="field"><label>Thời gian làm bài (phút) *</label><input type="number" id="pdur" min="5" max="300" step="1" value="${x.duration}"></div>
         <div class="field"><label>Điểm đạt (% tổng điểm) *</label><input type="number" id="ppass" min="0" max="100" step="1" value="${x.passPct}"></div>
       </div>
+      <div class="row2">
+        <div class="field"><label>Số câu trắc nghiệm *</label><input type="number" id="pmcq" min="1" max="100" step="1" value="${x.mcqCount || boot.config.mcqCount}"></div>
+        <div class="field"><label>Số câu tự luận *</label><input type="number" id="pessay" min="1" max="20" step="1" value="${x.essayCount || boot.config.essayCount}"></div>
+      </div>
+      <p class="muted" style="margin-top:-6px">Mỗi vị trí cần có đủ số câu đang dùng trong ngân hàng đề. Đổi số câu chỉ áp dụng cho lượt thi bắt đầu sau khi lưu.</p>
       <div class="field"><label>Ghi chú</label><input type="text" id="pnote" value="${esc(x.note)}" maxlength="300"></div>
       ${p ? '<p class="muted">Đổi điểm đạt sẽ tự cập nhật lại cột Kết quả của các bài đã chấm trong đợt này.</p>' : ""}`;
     const m = openModal(p ? "Sửa đợt thi" : "Thêm đợt thi", body, `<button class="btn" data-close>Hủy</button><button class="btn pri" id="psave">Lưu đợt thi</button>`);
@@ -769,7 +786,8 @@
       const period_ = {
         originalName: p ? p.name : "", name: $("#pname", m).value.trim(),
         opensAt: fromInput($("#popen", m).value), closesAt: fromInput($("#pclose", m).value),
-        duration: Number($("#pdur", m).value), passPct: Number($("#ppass", m).value), note: $("#pnote", m).value.trim()
+        duration: Number($("#pdur", m).value), passPct: Number($("#ppass", m).value),
+        mcqCount: Number($("#pmcq", m).value), essayCount: Number($("#pessay", m).value), note: $("#pnote", m).value.trim()
       };
       if (!period_.name) throw new Error("Vui lòng nhập tên kỳ thi.");
       await api("admin.periods.save", { period: period_ });

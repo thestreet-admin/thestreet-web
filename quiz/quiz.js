@@ -147,6 +147,12 @@
             periods.map(p => `<option value="${esc(p.name)}"${p.name === appState.examPeriod ? " selected" : ""}>${esc(p.name)}</option>`).join("");
     }
 
+    function countText() {
+        const p = selectedPeriod();
+        const c = p && p.mcqCount ? p : examConfig;
+        return `Hoàn thành ${c.mcqCount} câu trắc nghiệm + ${c.essayCount} câu tự luận`;
+    }
+
     function durationText() {
         const p = selectedPeriod();
         return (p ? p.duration : DEFAULT_DURATION) + " phút";
@@ -163,6 +169,8 @@
         }
         const d = $("#ts-duration-text");
         if (d) d.innerText = durationText();
+        const c = $("#ts-count-text");
+        if (c) c.innerText = countText();
     }
 
     function renderHome() {
@@ -176,7 +184,7 @@
                 <div style="font-weight:700; font-size:11px; color:#e8282e; letter-spacing:3px; margin-top:2px; margin-bottom: 20px;">NHẬU CÓ CHẤT</div>
 
                 <h2 style="color:#1a5c2a; font-weight:800; font-size:20px; margin:0 0 6px;">BÀI THI TĂNG CẤP</h2>
-                <p id="ts-count-text" style="color:#666; font-size:13px; margin:0 0 24px;">Hoàn thành ${examConfig.mcqCount} câu trắc nghiệm + ${examConfig.essayCount} câu tự luận</p>
+                <p id="ts-count-text" style="color:#666; font-size:13px; margin:0 0 24px;">${countText()}</p>
                 <p style="color:#e8282e; font-size:13px; font-weight:bold; margin:-14px 0 24px;">⏱️ Thời gian giới hạn: <span id="ts-duration-text">${durationText()}</span></p>
 
                 <label class="ts-label">Kỳ thi</label>
@@ -217,7 +225,6 @@
         if (!sel || !cnt) { renderHome(); return; }
         sel.innerHTML = periodOptionsHTML();
         sel.value = appState.examPeriod;
-        cnt.innerText = `Hoàn thành ${examConfig.mcqCount} câu trắc nghiệm + ${examConfig.essayCount} câu tự luận`;
         updateStartBtn();
     }
 
