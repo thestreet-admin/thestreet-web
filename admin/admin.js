@@ -1014,34 +1014,66 @@
     return { q, error, kind: id ? "update" : "add" };
   }
 
+  // Đọc file Excel/CSV thành bảng. Tự tìm sheet và dòng tiêu đề (file nhân sự hay có tên công ty, tiêu đề ở vài dòng đầu),
+  // CSV: tự nhận bảng mã UTF-8 (có/không BOM) hoặc Windows-1258 (Excel "CSV" trên Windows tiếng Việt).
+  // findCols(head đã bỏ dấu) → đối tượng cột, hoặc null nếu dòng đó không phải tiêu đề. Trả { aoa, start, col, sheet, headRow, rawHead }.
+  async function readTableFile(file, findCols) {
+    const X = window.XLSX;
+    const buf = await file.arrayBuffer();
+    let wb;
+    if (/\.(csv|txt)$/i.test(file.name)) {
+      let text;
+      try { text = new TextDecoder("utf-8", { fatal: true }).decode(buf); }
+      catch (e) { text = new TextDecoder("windows-1258").decode(buf); }
+      wb = X.read(text.replace(/^﻿/, "").normalize("NFC"), { type: "string" });
+    } else wb = X.read(buf, { type: "array" });
+    for (const name of wb.SheetNames) {
+      const ws = wb.Sheets[name];
+      if (!ws || !ws["!ref"]) continue;
+      const first = X.utils.decode_range(ws["!ref"]).s.r;
+      const aoa = X.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false, blankrows: true })
+        .map(r => r.map(v => typeof v === "string" ? v.normalize("NFC") : v));
+      for (let i = 0; i < Math.min(aoa.length, 20); i++) {
+        const raw = aoa[i] || [];
+        const col = findCols(raw.map(h => norm(String(h)).replace(/\s+/g, " ").trim()));
+        if (col) return { aoa, start: i + 1, col, sheet: name, headRow: first + i + 1, rowOffset: first + 1, rawHead: raw, sheetCount: wb.SheetNames.length };
+      }
+    }
+    return null;
+  }
+  function pickCol(head, ...tests) {
+    for (const t of tests) { const i = head.findIndex(h => h && t(h)); if (i >= 0) return i; }
+    return -1;
+  }
+
   async function importBank(file) {
     await run(async () => {
       if (!bank) { const d = await api("admin.bank.list"); bank = d.questions; }
       await loadScript(XLSX_CDN);
       const X = window.XLSX;
-      // CSV đọc dạng chữ UTF-8 để giữ tiếng Việt có dấu; xlsx/xls đọc dạng nhị phân
-      const wb = /\.csv$/i.test(file.name) ? X.read(await file.text(), { type: "string" }) : X.read(await file.arrayBuffer(), { type: "array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const aoa = X.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
-      // Tìm cột theo tiêu đề (không phân biệt dấu, hoa thường)
-      const head = (aoa[0] || []).map(h => norm(String(h)));
-      const find = (test) => head.findIndex(test);
-      const col = {
-        id: find(h => h.startsWith("ma")), pos: find(h => h.startsWith("vi tri")), type: find(h => h.startsWith("loai")),
-        q: find(h => h.startsWith("noi dung")), a: find(h => /phuong an a$/.test(h)), b: find(h => /phuong an b$/.test(h)),
-        c: find(h => /phuong an c$/.test(h)), d: find(h => /phuong an d$/.test(h)), ans: find(h => h.startsWith("dap an dung")),
-        pts: find(h => h.startsWith("diem")), status: find(h => h.startsWith("trang thai")), guide: find(h => h.startsWith("dap an mau"))
+      const bankCols = head => {
+        const find = test => head.findIndex(h => h && test(h));
+        const col = {
+          id: find(h => h.startsWith("ma")), pos: find(h => h.startsWith("vi tri")), type: find(h => h.startsWith("loai")),
+          q: find(h => h.startsWith("noi dung")), a: find(h => /phuong an a$/.test(h)), b: find(h => /phuong an b$/.test(h)),
+          c: find(h => /phuong an c$/.test(h)), d: find(h => /phuong an d$/.test(h)), ans: find(h => h.startsWith("dap an dung")),
+          pts: find(h => h.startsWith("diem")), status: find(h => h.startsWith("trang thai")), guide: find(h => h.startsWith("dap an mau"))
+        };
+        return col.pos >= 0 && col.type >= 0 && col.q >= 0 ? col : null;
       };
-      const missing = ["pos", "type", "q"].filter(k => col[k] < 0);
-      if (missing.length) throw new Error("File thiếu cột Vị trí / Loại / Nội dung câu hỏi. Hãy bấm ⬇ Xuất Excel để lấy file mẫu đúng định dạng.");
+      const t = await readTableFile(file, bankCols);
+      if (!t) throw new Error("File thiếu cột Vị trí / Loại / Nội dung câu hỏi. Hãy bấm ⬇ Xuất Excel để lấy file mẫu đúng định dạng.");
+      const { aoa, col } = t;
       const items = [], seen = {};
-      for (let i = 1; i < aoa.length; i++) {
+      for (let i = t.start; i < aoa.length; i++) {
         const r = aoa[i];
         if (!r || r.every(v => String(v).trim() === "")) continue;
-        const it = parseBankRow(k => col[k] >= 0 ? (r[col[k]] === undefined ? "" : r[col[k]]) : "", i + 1);
+        const rowNo = t.rowOffset + i;
+        const it = parseBankRow(k => col[k] >= 0 ? (r[col[k]] === undefined ? "" : r[col[k]]) : "", rowNo);
+        if (!it.error && /\uFFFD/.test(JSON.stringify(it.q))) it.error = "Lỗi bảng mã chữ (font): hãy lưu lại file dạng Excel (.xlsx) hoặc \"CSV UTF-8\" rồi nhập lại.";
         if (!it.error && it.q.id) {
           if (seen[it.q.id]) it.error = "Mã câu " + it.q.id + " lặp lại (đã có ở dòng " + seen[it.q.id] + ").";
-          else seen[it.q.id] = i + 1;
+          else seen[it.q.id] = rowNo;
         }
         items.push(it);
       }
@@ -1338,25 +1370,50 @@
     });
   }
 
+  // Nhận cột trong file nhân sự theo tiêu đề (không phân biệt dấu, hoa thường). Trả null nếu dòng không phải tiêu đề.
+  function staffCols(head) {
+    const col = {
+      id: pickCol(head, h => /^(ma nv|ma nhan vien|ma so nhan vien|ma so nv|msnv|ma so|ma)$/.test(h), h => /^ma (nv|nhan vien|so nhan vien|so nv)\b/.test(h),
+        h => h.startsWith("ma") && !/thue|cccd|cmnd|can cuoc|chi nhanh|cua hang|co so|bo phan|phong|don vi|ngan hang|bao hiem|bhxh|so the|cham cong/.test(h)),
+      name: pickCol(head, h => /^(ho va ten|ho ten|ho va ten nhan vien|ho ten nhan vien|ten nhan vien|ten day du|nhan vien)$/.test(h), h => /^ho (va )?ten\b/.test(h)),
+      ho: pickCol(head, h => /^(ho|ho dem|ho va dem|ho va ten dem|ho lot|ho va ten lot|ho chu lot)$/.test(h)),
+      ten: pickCol(head, h => h === "ten"),
+      pos: pickCol(head, h => h.startsWith("vi tri"), h => /^(chuc vu|chuc danh)/.test(h), h => h.startsWith("bo phan")),
+      branch: pickCol(head, h => /^(chi nhanh|co so|cua hang|nha hang|dia diem|noi lam viec|don vi)/.test(h)),
+      status: pickCol(head, h => /^(trang thai|tinh trang)/.test(h)),
+      note: pickCol(head, h => h.startsWith("ghi chu"))
+    };
+    return col.id >= 0 && (col.name >= 0 || col.ten >= 0) ? col : null;
+  }
+  // Trạng thái trong file nhân sự: "Chính thức", "Thử việc"... = đang làm; "Nghỉ việc", "Thôi việc"... = nghỉ. Trả true/false, hoặc null nếu không rõ.
+  function staffActive(st) {
+    if (!st) return true;
+    if (/^(nghi|nghi viec|da nghi|da nghi viec|thoi viec|da thoi viec|nghi han|nghi lam)$/.test(st)) return false;
+    if (/^(dang lam|dang lam viec|dang di lam|di lam|lam viec|chinh thuc|nhan vien chinh thuc|thu viec|thoi vu|hoc viec|part ?time|full ?time|ban thoi gian|toan thoi gian|cong tac vien)$/.test(st)) return true;
+    return null;
+  }
+
   // Đọc 1 dòng Excel thành nhân viên + kiểm tra giống server. Trả { e, error, kind }.
-  function parseStaffRow(get, rowNo) {
-    const st = norm(String(get("status")).trim());
+  function parseStaffRow(get, rowNo, col) {
+    const stRaw = String(get("status")).trim();
+    const name = col.name >= 0 ? String(get("name")) : (String(get("ho")).trim() + " " + String(get("ten")).trim());
+    const act = staffActive(norm(stRaw).replace(/\s+/g, " ").trim());
     const e = {
-      rowNo, empId: String(get("id")).trim(), name: String(get("name")).trim().replace(/\s+/g, " "),
-      position: String(get("pos")).trim(), branch: String(get("branch")).trim(), note: String(get("note")).trim(),
-      active: !(st === "nghi" || st === "nghi viec" || st === "da nghi")
+      rowNo, empId: String(get("id")).trim(), name: name.trim().replace(/\s+/g, " "),
+      position: String(get("pos")).trim(), branch: String(get("branch")).trim(), note: String(get("note")).trim(), active: act !== false
     };
     const p = boot.positions.find(x => norm(x.label) === norm(e.position) || x.id === norm(e.position));
     if (p) e.position = p.label;
     let error = "";
-    if (!e.empId) error = "Thiếu mã nhân viên.";
+    if (/\uFFFD/.test(JSON.stringify(e))) error = "Lỗi bảng mã chữ (font): hãy lưu lại file dạng Excel (.xlsx) hoặc \"CSV UTF-8\" rồi nhập lại.";
+    else if (!e.empId) error = "Thiếu mã nhân viên.";
     else if (e.empId.length > 50) error = "Mã nhân viên tối đa 50 ký tự.";
     else if (!e.name) error = "Thiếu họ và tên.";
     else if (e.name.length > 100) error = "Họ và tên quá dài.";
     else if (e.position.length > 50) error = "Vị trí quá dài.";
     else if (e.branch.length > 100) error = "Chi nhánh quá dài.";
     else if (e.note.length > 500) error = "Ghi chú quá dài.";
-    else if (st && st !== "dang lam" && e.active) error = "Trạng thái chỉ được là \"Đang làm\" hoặc \"Nghỉ\".";
+    else if (act === null) error = "Trạng thái \"" + stRaw + "\" chưa rõ là đang làm hay đã nghỉ. Sửa thành \"Đang làm\" hoặc \"Nghỉ\".";
     let kind = "add";
     const old = (staff || []).find(s => norm(s.empId) === norm(e.empId));
     if (old) {
@@ -1370,36 +1427,36 @@
     await run(async () => {
       if (!staff) { const d = await api("admin.employees.list"); staff = d.employees; }
       await loadScript(XLSX_CDN);
-      const X = window.XLSX;
-      const wb = /\.csv$/i.test(file.name) ? X.read(await file.text(), { type: "string" }) : X.read(await file.arrayBuffer(), { type: "array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const aoa = X.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
-      const head = (aoa[0] || []).map(h => norm(String(h)));
-      const find = test => head.findIndex(test);
-      const col = {
-        id: find(h => h.startsWith("ma")), name: find(h => h.startsWith("ho") || h === "ten" || h.startsWith("ten nhan vien")),
-        pos: find(h => h.startsWith("vi tri")), branch: find(h => h.startsWith("chi nhanh") || h.startsWith("co so")),
-        status: find(h => h.startsWith("trang thai")), note: find(h => h.startsWith("ghi chu"))
-      };
-      if (col.id < 0 || col.name < 0) throw new Error("File thiếu cột Mã NV hoặc Họ và tên. Hãy bấm ⬇ Xuất Excel để lấy file mẫu đúng định dạng.");
+      const t = await readTableFile(file, staffCols);
+      if (!t) throw new Error("Không tìm thấy dòng tiêu đề có cột Mã NV và Họ và tên (hoặc Họ + Tên) trong file. Hãy bấm ⬇ Xuất Excel để lấy file mẫu đúng định dạng.");
+      const { aoa, col } = t;
       const items = [], seen = {};
-      for (let i = 1; i < aoa.length; i++) {
+      for (let i = t.start; i < aoa.length; i++) {
         const r = aoa[i];
         if (!r || r.every(v => String(v).trim() === "")) continue;
-        const it = parseStaffRow(k => col[k] >= 0 ? (r[col[k]] === undefined ? "" : r[col[k]]) : "", i + 1);
+        const rowNo = t.rowOffset + i;
+        const it = parseStaffRow(k => col[k] >= 0 ? (r[col[k]] === undefined ? "" : r[col[k]]) : "", rowNo, col);
+        // Dòng tổng cộng / chữ ký cuối file (không có cả mã lẫn họ tên) → bỏ qua; có tên mà thiếu mã vẫn báo lỗi
+        if (!it.e.empId && !it.e.name) continue;
         const k = norm(it.e.empId);
         if (!it.error && k) {
           if (seen[k]) it.error = "Mã NV " + it.e.empId + " lặp lại (đã có ở dòng " + seen[k] + ").";
-          else seen[k] = i + 1;
+          else seen[k] = rowNo;
         }
         items.push(it);
       }
       if (!items.length) throw new Error("File không có dòng nhân viên nào.");
-      showStaffImportPreview(file.name, items);
+      const used = { id: "Mã NV", name: "Họ và tên", ho: "Họ", ten: "Tên", pos: "Vị trí", branch: "Chi nhánh", status: "Trạng thái", note: "Ghi chú" };
+      const mapped = Object.keys(used).filter(k => col[k] >= 0 && !(k === "ho" || k === "ten") || ((k === "ho" || k === "ten") && col.name < 0 && col[k] >= 0))
+        .map(k => used[k] + " ← \"" + String(t.rawHead[col[k]]).trim() + "\"");
+      const usedIdx = new Set(Object.keys(used).map(k => col[k]).filter(i => i >= 0));
+      const ignored = t.rawHead.map((h, i) => usedIdx.has(i) ? "" : String(h).trim()).filter(Boolean);
+      const where = (t.sheetCount > 1 ? "sheet \"" + t.sheet + "\", " : "") + "tiêu đề ở dòng " + t.headRow;
+      showStaffImportPreview(file.name, items, { where, mapped, ignored });
     });
   }
 
-  function showStaffImportPreview(fileName, items) {
+  function showStaffImportPreview(fileName, items, info) {
     const errs = items.filter(i => i.error);
     const n = k => items.filter(i => !i.error && i.kind === k).length;
     const tooMany = items.length > STAFF_MAX_IMPORT;
@@ -1407,6 +1464,7 @@
     const kindBadge = k => k === "add" ? '<span class="badge b-ok">Thêm mới</span>' : (k === "update" ? '<span class="badge b-wait">Cập nhật</span>' : '<span class="badge b-gray">Không đổi</span>');
     const body = `
       <p><b>${esc(fileName)}</b>: ${items.length} dòng · <span class="badge b-ok">${n("add")} thêm mới</span> <span class="badge b-wait">${n("update")} cập nhật</span> <span class="badge b-gray">${n("same")} không đổi</span>${errs.length ? ` <span class="badge b-bad">${errs.length} dòng lỗi</span>` : ""}</p>
+      ${info ? `<p class="muted" style="margin-top:-4px">Đọc ${esc(info.where)}. Cột nhận được: ${info.mapped.map(esc).join(" · ")}.${info.ignored.length ? " Bỏ qua: " + info.ignored.map(esc).join(", ") + "." : ""}</p>` : ""}
       ${errs.length ? '<div class="sumbox" style="background:var(--redl);color:var(--red)">Có dòng lỗi nên chưa nhập được. Sửa các dòng bên dưới trong file Excel rồi chọn lại file.</div>' : ""}
       ${tooMany ? `<div class="sumbox" style="background:var(--redl);color:var(--red)">Mỗi lần nhập tối đa ${STAFF_MAX_IMPORT} người. Hãy chia file thành nhiều phần.</div>` : ""}
       ${!errs.length && !tooMany ? '<p class="muted">Người chưa có trong file vẫn giữ nguyên trong danh sách. Sau khi nhập, trang thi chỉ cho mã NV có trong danh sách và đang làm vào thi.</p>' : ""}
@@ -1433,7 +1491,7 @@
         if (er.data && Array.isArray(er.data.errors)) {
           const byRow = {}; er.data.errors.forEach(x => byRow[x.row] = x.error);
           items.forEach(i => { if (byRow[i.e.rowNo]) i.error = byRow[i.e.rowNo]; });
-          showStaffImportPreview(fileName, items);
+          showStaffImportPreview(fileName, items, info);
         }
         toast(er.message, true);
         const b = $("#simpgo"); if (b) b.disabled = false;

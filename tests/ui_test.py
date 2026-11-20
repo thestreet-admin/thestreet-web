@@ -179,7 +179,7 @@ def main():
         assert "2 dòng lỗi" in mt and "PV-TN-999" in mt and "Bếp" in mt and pg.locator("#impgo").count() == 0, mt[:600]
         pg.locator(".modal [data-close]").first.click()
         good = head + ",Phục Vụ,TN,Câu mới?,x,y,,,B,3,,\nPV-TL-001,Phục Vụ,TL,Tự luận sửa,,,,,,2,Tạm ẩn,- Ý 1\n"
-        pg.locator("#bfile").set_input_files(files=[{"name": "de.csv", "mimeType": "text/csv", "buffer": good.encode("utf-8")}]); pg.wait_for_timeout(1000)
+        pg.locator("#bfile").set_input_files(files=[{"name": "de.csv", "mimeType": "text/csv", "buffer": b"\xef\xbb\xbf" + good.encode("utf-8")}]); pg.wait_for_timeout(1000)
         assert "1 thêm mới" in pg.locator(".modal").inner_text() and "1 cập nhật" in pg.locator(".modal").inner_text()
         pg.locator("#impgo").click(); pg.wait_for_timeout(800)
         q1, q2 = IMPORTED[-1]
@@ -264,7 +264,7 @@ def main():
         bad = head + "TS0500,Võ Bảo,Phục Vụ,Quận 1,Đang làm,\nts0500,Trùng,,,,\n,Không mã,,,,\nTS0600,Ai Đó,,,Nghỉ phép,\n"
         pg.locator("#sfile").set_input_files(files=[{"name": "nv.csv", "mimeType": "text/csv", "buffer": bad.encode("utf-8")}]); pg.wait_for_timeout(1500)
         mt = pg.locator(".modal").inner_text()
-        assert "3 dòng lỗi" in mt and "lặp lại" in mt and "Thiếu mã" in mt and "Trạng thái chỉ được" in mt and pg.locator("#simpgo").count() == 0, mt[:600]
+        assert "3 dòng lỗi" in mt and "lặp lại" in mt and "Thiếu mã" in mt and "chưa rõ là đang làm hay đã nghỉ" in mt and pg.locator("#simpgo").count() == 0, mt[:600]
         pg.locator(".modal [data-close]").first.click()
         good = head + "TS0500,Võ Bảo,phục vụ,Quận 1,,\nTS0123,Nguyễn Văn An,Phục Vụ,Quận 3,Đang làm,Chuyển chi nhánh\nTS0200,Lê Thu Hà,Bếp,Quận 7,Nghỉ,Nghỉ T10\n"
         pg.locator("#sfile").set_input_files(files=[{"name": "nv.csv", "mimeType": "text/csv", "buffer": good.encode("utf-8")}]); pg.wait_for_timeout(1000)
@@ -275,12 +275,41 @@ def main():
         assert e1["empId"] == "TS0500" and e1["position"] == "Phục Vụ" and e1["active"] == "Đang làm", e1
         assert e2["branch"] == "Quận 3" and e3["active"] == "Nghỉ", (e2, e3)
         print("✓ Nhân viên: lọc, thêm (chặn mã trùng), nghỉ việc, xóa, nhập Excel có xem trước và chặn dòng lỗi")
+        # File nhân sự kiểu thực tế: dòng tên công ty ở trên, STT, Họ đệm + Tên tách cột, Chức vụ / Cửa hàng, Tình trạng kiểu nhân sự
+        hr = ("CÔNG TY TNHH THE STREET,,,,,,\nDANH SÁCH NHÂN VIÊN T11,,,,,,\n,,,,,,\n"
+              "STT,Mã số thuế,Mã nhân viên,Họ đệm,Tên,Chức vụ,Cửa hàng,Tình trạng\n"
+              "1,8123,TS0700,Nguyễn Thị Bích,Ngọc,Phục vụ,Quận 1,Chính thức\n2,8124,TS0701,Lê,Minh,Pha chế,Quận 7,Thử việc\n"
+              "3,8125,TS0702,Phạm Văn,Tài,Bếp,Thủ Đức,Nghỉ việc\nTổng cộng: 3 người,,,,,,,\n")
+        pg.locator("#sfile").set_input_files(files=[{"name": "nhansu.csv", "mimeType": "text/csv", "buffer": hr.encode("utf-8")}]); pg.wait_for_timeout(1200)
+        mt = pg.locator(".modal").inner_text()
+        assert "tiêu đề ở dòng 4" in mt and "Mã NV ← \"Mã nhân viên\"" in mt and "Bỏ qua: STT, Mã số thuế" in mt, mt[:600]
+        assert "Nguyễn Thị Bích Ngọc" in mt and "lỗi" not in mt and "3 thêm mới" in mt, mt[:900]
+        pg.locator("#simpgo").click(); pg.wait_for_timeout(800)
+        a, b2, c = STAFF_IMPORTED[-1]
+        assert (a["empId"], a["name"], a["position"], a["active"], a["rowNo"]) == ("TS0700", "Nguyễn Thị Bích Ngọc", "Phục Vụ", "Đang làm", 5), a
+        assert b2["active"] == "Đang làm" and c["active"] == "Nghỉ" and c["position"] == "Bếp", (b2, c)
+        # CSV lưu kiểu ANSI (Windows-1258) vẫn đọc đúng chữ Việt; trạng thái chưa rõ ("Nghỉ phép") → báo lỗi dòng
+        def cp1258(t):
+            import unicodedata
+            out = b""
+            for ch in t:
+                try: out += ch.encode("cp1258")
+                except UnicodeEncodeError:
+                    d = unicodedata.normalize("NFD", ch); tones = "\u0300\u0301\u0303\u0309\u0323"
+                    out += unicodedata.normalize("NFC", "".join(x for x in d if x not in tones)).encode("cp1258") + "".join(x for x in d if x in tones).encode("cp1258")
+            return out
+        ansi = cp1258("Mã NV,Họ và tên,Trạng thái\nTS0800,Đặng Mỹ Linh,Đang làm\nTS0801,Trần Thị Ánh Tuyết,Nghỉ phép\n")
+        pg.locator("#sfile").set_input_files(files=[{"name": "ansi.csv", "mimeType": "text/csv", "buffer": ansi}]); pg.wait_for_timeout(1200)
+        mt = pg.locator(".modal").inner_text()
+        assert "Đặng Mỹ Linh" in mt and "Trần Thị Ánh Tuyết" in mt and "Nghỉ phép" in mt and "1 dòng lỗi" in mt and pg.locator("#simpgo").count() == 0, mt[:600]
+        pg.locator(".modal [data-close]").first.click()
+        print("✓ Nhân viên: đọc được file nhân sự thực tế (dòng tiêu đề ở giữa, Họ/Tên tách cột, trạng thái kiểu nhân sự, CSV ANSI)")
         with pg.expect_download() as dl:
             vis.locator("#sexp").click()
         assert dl.value.suggested_filename.startswith("NhanVien_"), dl.value.suggested_filename
         pg.locator("#sfile").set_input_files(dl.value.path()); pg.wait_for_timeout(1000)
         mt = pg.locator(".modal").inner_text()
-        assert "3 không đổi" in mt and "0 thêm mới" in mt and "lỗi" not in mt, mt[:400]
+        assert "6 không đổi" in mt and "0 thêm mới" in mt and "lỗi" not in mt, mt[:400]
         pg.locator(".modal [data-close]").first.click()
         print("✓ Nhân viên: xuất Excel, nhập lại chính file đó được nhận đúng")
 
