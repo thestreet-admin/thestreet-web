@@ -53,6 +53,10 @@
     let submitting = false;
     let starting = false;
     let timeoutHandled = false;
+    // Danh sách nhân viên: server báo staffList = true → phải nhập mã NV có trong danh sách, họ tên tự điền
+    let staffList = false;
+    let lookup = { forId: "", status: "", msg: "" };   // status: "", "loading", "ok", "bad", "neterr"
+    let lookupTimer = null, lookupSeq = 0;
 
     /* ======================= TIỆN ÍCH ======================= */
     function esc(s) {
@@ -159,7 +163,10 @@
     }
 
     function canStart() {
-        return !!(appState.selectedPosition && appState.name.trim() && appState.empId.trim() && appState.examPeriod && !starting);
+        const who = staffList
+            ? (lookup.forId === appState.empId.trim() && (lookup.status === "ok" || lookup.status === "neterr"))
+            : !!appState.name.trim();
+        return !!(appState.selectedPosition && who && appState.empId.trim() && appState.examPeriod && !starting);
     }
     function updateStartBtn() {
         const b = $("#start-btn");
@@ -171,6 +178,47 @@
         if (d) d.innerText = durationText();
         const c = $("#ts-count-text");
         if (c) c.innerText = countText();
+        const st = $("#emp-status");
+        if (st) {
+            const cur = lookup.forId === appState.empId.trim() ? lookup : { status: "" };
+            st.className = "ts-emp-status" + (cur.status ? " " + cur.status : "");
+            st.textContent = cur.status === "loading" ? "⏳ Đang kiểm tra mã nhân viên..." : (cur.msg || "");
+        }
+        const nm = $("#candidate-name");
+        if (nm && staffList) nm.value = appState.name;
+    }
+
+    // Tra mã NV trong danh sách nhân viên để tự điền họ tên (chỉ khi server báo đã có danh sách)
+    function scheduleLookup() {
+        if (!staffList) return;
+        clearTimeout(lookupTimer);
+        const id = appState.empId.trim();
+        appState.name = "";
+        lookup = { forId: id, status: id ? "loading" : "", msg: "" };
+        updateStartBtn();
+        if (id) lookupTimer = setTimeout(() => runLookup(id), 500);
+    }
+    async function runLookup(id) {
+        const seq = ++lookupSeq;
+        let res = null;
+        try { res = await postApi({ action: "lookup", empId: id }); } catch (e) { res = null; }
+        if (seq !== lookupSeq || appState.empId.trim() !== id || appState.screen !== "home") return;
+        if (res && res.result === "success" && res.required === false) {
+            // Quản lý vừa xóa hết danh sách → quay về tự gõ họ tên
+            staffList = false; lookup = { forId: "", status: "", msg: "" };
+            renderHome(); return;
+        }
+        if (res && res.result === "success") {
+            appState.name = res.name;
+            if (!appState.selectedPosition && res.positionId) appState.selectedPosition = res.positionId;
+            $all(".ts-pos-btn").forEach(b => b.classList.toggle("selected", b.getAttribute("data-id") === appState.selectedPosition));
+            lookup = { forId: id, status: "ok", msg: "✓ " + res.name + (res.position ? " · " + res.position : "") };
+        } else if (res && res.error) {
+            lookup = { forId: id, status: "bad", msg: "⚠️ " + res.error };
+        } else {
+            lookup = { forId: id, status: "neterr", msg: "Chưa kiểm tra được mã (mạng yếu). Bạn vẫn có thể bấm Bắt đầu thi, hệ thống sẽ kiểm tra lại." };
+        }
+        updateStartBtn();
     }
 
     function renderHome() {
@@ -192,11 +240,20 @@
                     ${periodOptionsHTML()}
                 </select>
 
+                ${staffList ? `
+                <label class="ts-label">Mã nhân viên</label>
+                <input type="text" id="emp-id" class="ts-input" placeholder="Nhập mã nhân viên..." value="${esc(appState.empId)}" maxlength="50" autocapitalize="characters" spellcheck="false" style="margin-bottom:6px">
+                <div id="emp-status" class="ts-emp-status"></div>
+
+                <label class="ts-label">Họ và tên nhân viên</label>
+                <input type="text" id="candidate-name" class="ts-input" placeholder="Tự điền theo mã nhân viên" value="${esc(appState.name)}" maxlength="100" readonly tabindex="-1">
+                ` : `
                 <label class="ts-label">Họ và tên nhân viên</label>
                 <input type="text" id="candidate-name" class="ts-input" placeholder="Nhập họ và tên..." value="${esc(appState.name)}" maxlength="100">
 
                 <label class="ts-label">Mã nhân viên</label>
                 <input type="text" id="emp-id" class="ts-input" placeholder="Nhập mã nhân viên..." value="${esc(appState.empId)}" maxlength="50">
+                `}
 
                 <label class="ts-label">Chọn vị trí thi</label>
                 <div class="ts-grid-2">${posBtns}</div>
@@ -206,8 +263,8 @@
         `;
 
         $("#exam-period").onchange = e => { appState.examPeriod = e.target.value; updateStartBtn(); };
-        $("#candidate-name").oninput = e => { appState.name = e.target.value; updateStartBtn(); };
-        $("#emp-id").oninput = e => { appState.empId = e.target.value; updateStartBtn(); };
+        if (!staffList) $("#candidate-name").oninput = e => { appState.name = e.target.value; updateStartBtn(); };
+        $("#emp-id").oninput = e => { appState.empId = e.target.value; if (staffList) scheduleLookup(); else updateStartBtn(); };
         $all(".ts-pos-btn").forEach(btn => {
             btn.onclick = e => {
                 appState.selectedPosition = e.currentTarget.getAttribute("data-id");
@@ -232,14 +289,15 @@
         if (!canStart()) return;
         starting = true;
         updateStartBtn();
-        let res = null, lastErr = "";
+        let res = null, lastErr = "", lastRes = null;
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
                 res = await postApi({
-                    action: "start", name: appState.name.trim(), empId: appState.empId.trim(),
+                    action: "start", name: staffList ? "" : appState.name.trim(), empId: appState.empId.trim(),
                     period: appState.examPeriod, positionId: appState.selectedPosition
                 });
                 if (res && res.result === "success") break;
+                lastRes = res;
                 lastErr = (res && res.error) || "Máy chủ trả về lỗi không xác định.";
                 if (res && res.code !== "BUSY") break;
             } catch (e) {
@@ -250,6 +308,7 @@
         }
         starting = false;
         if (!res || res.result !== "success") {
+            if (staffList && lastRes && lastRes.code === "NOT_FOUND") lookup = { forId: appState.empId.trim(), status: "bad", msg: "⚠️ " + lastErr };
             updateStartBtn();
             alert("⚠️ " + lastErr);
             return;
@@ -528,6 +587,10 @@
                 if (data && data.ok && Array.isArray(data.periods)) {
                     periods = data.periods.map(p => typeof p === "string" ? { name: p, duration: DEFAULT_DURATION } : p);
                     if (data.mcqCount) examConfig = { mcqCount: data.mcqCount, essayCount: data.essayCount };
+                    if (data.staffList && !staffList) {
+                        staffList = true;
+                        if (appState.screen === "home") { appState.name = ""; renderHome(); if (appState.empId.trim()) scheduleLookup(); }
+                    }
                 }
             } catch (e) { console.error("Lỗi đồng bộ đợt thi:", e); }
             if (periods === null && attempt < 3) await sleep(1500 * attempt);

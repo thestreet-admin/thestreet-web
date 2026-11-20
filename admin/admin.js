@@ -53,6 +53,8 @@
   let bank = null;
   let bFilter = { position: "", type: "", status: "", q: "" };
   let accounts = null;
+  let staff = null;
+  let sFilter = { branch: "", position: "", status: "on", q: "" };
   let logs = null, logTotal = 0;
   let lFilter = { user: "", action: "", q: "", limit: 100 };
   let busyCount = 0;
@@ -227,7 +229,7 @@
   function logout(expired) {
     if (token && !expired) { fetch(API_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action: "admin.logout", token }) }).catch(() => {}); }
     token = null; ssSet(TOKEN_KEY, null);
-    boot = stats = results = bank = accounts = logs = null;
+    boot = stats = results = bank = accounts = logs = staff = null;
     closeModal();
     renderLogin(expired ? "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại." : "");
   }
@@ -241,7 +243,7 @@
   /* ============================== KHUNG TRANG ============================== */
   function allowedTabs() {
     const all = [["overview", "📊 Tổng quan & Báo cáo"], ["results", "📝 Bài thi & Chấm điểm"], ["bank", "📚 Ngân hàng đề"], ["periods", "🗓️ Đợt thi"],
-      ["accounts", "👤 Tài khoản"], ["log", "📜 Nhật ký"]];
+      ["staff", "👥 Nhân viên"], ["accounts", "👤 Tài khoản"], ["log", "📜 Nhật ký"]];
     return isMgr() ? all : all.filter(t => t[0] === "results");   // Người chấm chỉ chấm bài
   }
   function renderShell() {
@@ -265,7 +267,7 @@
     $$("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; ssSet("ts_admin_tab", tab); renderShell(); });
     $("#lo").onclick = () => logout(false);
     const pwb = $("#pw"); if (pwb) pwb.onclick = changePassword;
-    $("#rf").onclick = () => run(async () => { stats = results = bank = accounts = logs = null; await loadBoot(); });
+    $("#rf").onclick = () => run(async () => { stats = results = bank = accounts = logs = staff = null; await loadBoot(); });
     renderTab();
   }
 
@@ -273,6 +275,7 @@
     if (tab === "overview") return renderOverview();
     if (tab === "results") return renderResults();
     if (tab === "bank") return renderBank();
+    if (tab === "staff") return renderStaff();
     if (tab === "accounts") return renderAccounts();
     if (tab === "log") return renderLog();
     return renderPeriods();
@@ -1011,34 +1014,66 @@
     return { q, error, kind: id ? "update" : "add" };
   }
 
+  // Đọc file Excel/CSV thành bảng. Tự tìm sheet và dòng tiêu đề (file nhân sự hay có tên công ty, tiêu đề ở vài dòng đầu),
+  // CSV: tự nhận bảng mã UTF-8 (có/không BOM) hoặc Windows-1258 (Excel "CSV" trên Windows tiếng Việt).
+  // findCols(head đã bỏ dấu) → đối tượng cột, hoặc null nếu dòng đó không phải tiêu đề. Trả { aoa, start, col, sheet, headRow, rawHead }.
+  async function readTableFile(file, findCols) {
+    const X = window.XLSX;
+    const buf = await file.arrayBuffer();
+    let wb;
+    if (/\.(csv|txt)$/i.test(file.name)) {
+      let text;
+      try { text = new TextDecoder("utf-8", { fatal: true }).decode(buf); }
+      catch (e) { text = new TextDecoder("windows-1258").decode(buf); }
+      wb = X.read(text.replace(/^﻿/, "").normalize("NFC"), { type: "string" });
+    } else wb = X.read(buf, { type: "array" });
+    for (const name of wb.SheetNames) {
+      const ws = wb.Sheets[name];
+      if (!ws || !ws["!ref"]) continue;
+      const first = X.utils.decode_range(ws["!ref"]).s.r;
+      const aoa = X.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false, blankrows: true })
+        .map(r => r.map(v => typeof v === "string" ? v.normalize("NFC") : v));
+      for (let i = 0; i < Math.min(aoa.length, 20); i++) {
+        const raw = aoa[i] || [];
+        const col = findCols(raw.map(h => norm(String(h)).replace(/\s+/g, " ").trim()));
+        if (col) return { aoa, start: i + 1, col, sheet: name, headRow: first + i + 1, rowOffset: first + 1, rawHead: raw, sheetCount: wb.SheetNames.length };
+      }
+    }
+    return null;
+  }
+  function pickCol(head, ...tests) {
+    for (const t of tests) { const i = head.findIndex(h => h && t(h)); if (i >= 0) return i; }
+    return -1;
+  }
+
   async function importBank(file) {
     await run(async () => {
       if (!bank) { const d = await api("admin.bank.list"); bank = d.questions; }
       await loadScript(XLSX_CDN);
       const X = window.XLSX;
-      // CSV đọc dạng chữ UTF-8 để giữ tiếng Việt có dấu; xlsx/xls đọc dạng nhị phân
-      const wb = /\.csv$/i.test(file.name) ? X.read(await file.text(), { type: "string" }) : X.read(await file.arrayBuffer(), { type: "array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const aoa = X.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
-      // Tìm cột theo tiêu đề (không phân biệt dấu, hoa thường)
-      const head = (aoa[0] || []).map(h => norm(String(h)));
-      const find = (test) => head.findIndex(test);
-      const col = {
-        id: find(h => h.startsWith("ma")), pos: find(h => h.startsWith("vi tri")), type: find(h => h.startsWith("loai")),
-        q: find(h => h.startsWith("noi dung")), a: find(h => /phuong an a$/.test(h)), b: find(h => /phuong an b$/.test(h)),
-        c: find(h => /phuong an c$/.test(h)), d: find(h => /phuong an d$/.test(h)), ans: find(h => h.startsWith("dap an dung")),
-        pts: find(h => h.startsWith("diem")), status: find(h => h.startsWith("trang thai")), guide: find(h => h.startsWith("dap an mau"))
+      const bankCols = head => {
+        const find = test => head.findIndex(h => h && test(h));
+        const col = {
+          id: find(h => h.startsWith("ma")), pos: find(h => h.startsWith("vi tri")), type: find(h => h.startsWith("loai")),
+          q: find(h => h.startsWith("noi dung")), a: find(h => /phuong an a$/.test(h)), b: find(h => /phuong an b$/.test(h)),
+          c: find(h => /phuong an c$/.test(h)), d: find(h => /phuong an d$/.test(h)), ans: find(h => h.startsWith("dap an dung")),
+          pts: find(h => h.startsWith("diem")), status: find(h => h.startsWith("trang thai")), guide: find(h => h.startsWith("dap an mau"))
+        };
+        return col.pos >= 0 && col.type >= 0 && col.q >= 0 ? col : null;
       };
-      const missing = ["pos", "type", "q"].filter(k => col[k] < 0);
-      if (missing.length) throw new Error("File thiếu cột Vị trí / Loại / Nội dung câu hỏi. Hãy bấm ⬇ Xuất Excel để lấy file mẫu đúng định dạng.");
+      const t = await readTableFile(file, bankCols);
+      if (!t) throw new Error("File thiếu cột Vị trí / Loại / Nội dung câu hỏi. Hãy bấm ⬇ Xuất Excel để lấy file mẫu đúng định dạng.");
+      const { aoa, col } = t;
       const items = [], seen = {};
-      for (let i = 1; i < aoa.length; i++) {
+      for (let i = t.start; i < aoa.length; i++) {
         const r = aoa[i];
         if (!r || r.every(v => String(v).trim() === "")) continue;
-        const it = parseBankRow(k => col[k] >= 0 ? (r[col[k]] === undefined ? "" : r[col[k]]) : "", i + 1);
+        const rowNo = t.rowOffset + i;
+        const it = parseBankRow(k => col[k] >= 0 ? (r[col[k]] === undefined ? "" : r[col[k]]) : "", rowNo);
+        if (!it.error && /\uFFFD/.test(JSON.stringify(it.q))) it.error = "Lỗi bảng mã chữ (font): hãy lưu lại file dạng Excel (.xlsx) hoặc \"CSV UTF-8\" rồi nhập lại.";
         if (!it.error && it.q.id) {
           if (seen[it.q.id]) it.error = "Mã câu " + it.q.id + " lặp lại (đã có ở dòng " + seen[it.q.id] + ").";
-          else seen[it.q.id] = i + 1;
+          else seen[it.q.id] = rowNo;
         }
         items.push(it);
       }
@@ -1167,6 +1202,303 @@
     });
   }
 
+  /* ============================== NHÂN VIÊN ============================== */
+  const STAFF_MAX_IMPORT = 1000;
+  async function renderStaff() {
+    const main = $("#main");
+    main.innerHTML = `<div id="smeta"></div><div class="card">
+      <div class="card-h"><h3>Danh sách nhân viên</h3><div class="bar" style="margin:0">
+        <button class="btn" id="sexp">⬇ Xuất Excel</button>
+        <button class="btn" id="simp">⬆ Nhập Excel</button><input type="file" id="sfile" accept=".xlsx,.xls,.csv" style="display:none">
+        <button class="btn pri" id="snew">+ Thêm nhân viên</button></div></div>
+      <p class="muted" style="margin:-4px 0 12px">Khi danh sách có ít nhất 1 người, trang thi chỉ cho <b>mã NV có trong danh sách và đang làm</b> vào thi; họ tên tự điền theo danh sách, nhân viên không sửa được.
+        Vị trí dự thi vẫn do nhân viên tự chọn. Danh sách trống thì trang thi hoạt động như cũ (nhân viên tự gõ họ tên).</p>
+      <div class="bar">
+        <select id="sbr"><option value="">Mọi chi nhánh</option></select>
+        <select id="spos"><option value="">Mọi vị trí</option></select>
+        <select id="sst"><option value="">Mọi trạng thái</option><option value="on"${sFilter.status === "on" ? " selected" : ""}>Đang làm</option><option value="off"${sFilter.status === "off" ? " selected" : ""}>Đã nghỉ</option></select>
+        <input type="text" id="sq" placeholder="Tìm mã NV, họ tên, ghi chú..." value="${esc(sFilter.q)}">
+      </div>
+      <div id="slist"><div class="empty">⏳ Đang tải danh sách nhân viên...</div></div></div>`;
+    $("#snew").onclick = () => editStaff(null);
+    $("#sexp").onclick = exportStaff;
+    $("#simp").onclick = () => { $("#sfile").value = ""; $("#sfile").click(); };
+    $("#sfile").onchange = e => { const f = e.target.files && e.target.files[0]; if (f) importStaff(f); };
+    $("#sbr").onchange = e => { sFilter.branch = e.target.value; drawStaff(); };
+    $("#spos").onchange = e => { sFilter.position = e.target.value; drawStaff(); };
+    $("#sst").onchange = e => { sFilter.status = e.target.value; drawStaff(); };
+    $("#sq").oninput = e => { sFilter.q = e.target.value; drawStaff(); };
+    if (!staff) {
+      const d = await run(() => api("admin.employees.list"));
+      if (!d) return;
+      staff = d.employees;
+    }
+    if (tab !== "staff") return;
+    drawStaff();
+  }
+
+  function distinct(list, key) {
+    const seen = {};
+    list.forEach(e => { const v = e[key]; if (v && !seen[norm(v)]) seen[norm(v)] = v; });
+    return Object.values(seen).sort((a, b) => a.localeCompare(b, "vi"));
+  }
+  function fillSelect(sel, all, values, cur) {
+    if (!sel) return;
+    sel.innerHTML = `<option value="">${all}</option>` + values.map(v => `<option${v === cur ? " selected" : ""}>${esc(v)}</option>`).join("");
+  }
+
+  function drawStaff() {
+    const el = $("#slist");
+    if (!el || !staff) return;
+    const branches = distinct(staff, "branch"), positions = distinct(staff, "position");
+    if (sFilter.branch && !branches.includes(sFilter.branch)) sFilter.branch = "";
+    if (sFilter.position && !positions.includes(sFilter.position)) sFilter.position = "";
+    fillSelect($("#sbr"), "Mọi chi nhánh", branches, sFilter.branch);
+    fillSelect($("#spos"), "Mọi vị trí", positions, sFilter.position);
+    const nOn = staff.filter(e => e.active).length;
+    $("#smeta").innerHTML = staff.length
+      ? `<div class="chips"><div class="chip"><b>${staff.length}</b> nhân viên</div><div class="chip"><b>${nOn}</b> đang làm</div>${staff.length > nOn ? `<div class="chip"><b>${staff.length - nOn}</b> đã nghỉ</div>` : ""}<div class="chip">✓ Trang thi đang kiểm tra mã NV theo danh sách</div></div>`
+      : `<div class="chips"><div class="chip warn">Danh sách đang trống — trang thi chưa kiểm tra mã NV, nhân viên tự gõ họ tên.</div></div>`;
+    if (!staff.length) {
+      el.innerHTML = '<div class="empty">Chưa có nhân viên nào. Bấm "+ Thêm nhân viên", hoặc "⬇ Xuất Excel" để lấy file mẫu, điền rồi "⬆ Nhập Excel".</div>';
+      return;
+    }
+    const q = norm(sFilter.q.trim());
+    const list = staff.filter(e =>
+      (!sFilter.branch || e.branch === sFilter.branch) && (!sFilter.position || e.position === sFilter.position) &&
+      (!sFilter.status || (sFilter.status === "on") === e.active) &&
+      (!q || norm(e.empId + " " + e.name + " " + e.note).includes(q)));
+    if (!list.length) { el.innerHTML = '<div class="empty">Không có nhân viên nào khớp bộ lọc.</div>'; return; }
+    el.innerHTML = `<p class="muted" style="margin:0 0 8px">${list.length} nhân viên</p><div class="tbl-wrap"><table>
+      <thead><tr><th>Mã NV</th><th>Họ và tên</th><th>Vị trí hiện tại</th><th>Chi nhánh</th><th>Trạng thái</th><th>Ghi chú</th><th></th></tr></thead>
+      <tbody>${list.map(e => `<tr data-id="${esc(e.empId)}" style="${e.active ? "" : "opacity:.6"}">
+        <td style="white-space:nowrap"><b>${esc(e.empId)}</b></td><td>${esc(e.name)}</td><td>${esc(e.position) || '<span class="muted">—</span>'}</td>
+        <td>${esc(e.branch) || '<span class="muted">—</span>'}</td>
+        <td>${e.active ? '<span class="badge b-ok">Đang làm</span>' : '<span class="badge b-gray">Đã nghỉ</span>'}</td>
+        <td><div class="clip" title="${esc(e.note)}">${esc(e.note)}</div></td>
+        <td style="white-space:nowrap"><button class="btn sm" data-act="edit">Sửa</button> <button class="btn sm" data-act="toggle">${e.active ? "Nghỉ việc" : "Đi làm lại"}</button> <button class="btn sm danger" data-act="del">Xóa</button></td></tr>`).join("")}</tbody></table></div>`;
+    $$("tr[data-id]", el).forEach(tr => {
+      const e = staff.find(x => x.empId === tr.dataset.id);
+      $('[data-act="edit"]', tr).onclick = () => editStaff(e);
+      $('[data-act="toggle"]', tr).onclick = () => run(async () => {
+        if (e.active && !confirm(`Chuyển ${e.name} (${e.empId}) sang "Đã nghỉ"?\n\nNgười này sẽ không vào thi được nữa. Bài thi cũ vẫn giữ nguyên.`)) return;
+        const d = await api("admin.employees.save", { employee: Object.assign({}, e, { originalEmpId: e.empId, active: !e.active }) });
+        staff = d.employees; logs = null; drawStaff();
+        toast(e.active ? "Đã chuyển " + e.name + " sang Đã nghỉ." : e.name + " đã đi làm lại.");
+      });
+      $('[data-act="del"]', tr).onclick = () => run(async () => {
+        if (!confirm(`Xóa ${e.name} (${e.empId}) khỏi danh sách?\n\nBài thi cũ vẫn giữ nguyên. Nếu người này chỉ nghỉ việc, nên bấm "Nghỉ việc" để giữ lại thông tin.`)) return;
+        const d = await api("admin.employees.delete", { empId: e.empId });
+        staff = d.employees; logs = null; drawStaff();
+        toast("Đã xóa " + e.name + " khỏi danh sách.");
+      });
+    });
+  }
+
+  function editStaff(e) {
+    const x = e || { empId: "", name: "", position: "", branch: sFilter.branch || "", active: true, note: "" };
+    const branches = distinct(staff || [], "branch");
+    const body = `
+      <div class="row2">
+        <div class="field"><label>Mã NV *</label><input type="text" id="sid" value="${esc(x.empId)}" maxlength="50" autocapitalize="off" spellcheck="false" placeholder="VD: TS0123">
+          ${e ? '<div class="muted">Đổi mã chỉ áp dụng cho lần thi sau; bài thi cũ giữ mã cũ.</div>' : '<div class="muted">Nhân viên dùng đúng mã này để vào thi (không phân biệt chữ hoa, chữ thường).</div>'}</div>
+        <div class="field"><label>Họ và tên *</label><input type="text" id="sname" value="${esc(x.name)}" maxlength="100" placeholder="Tên hiện trên bài thi và phiếu điểm"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Vị trí hiện tại</label><input type="text" id="spos2" list="spos-list" value="${esc(x.position)}" maxlength="50" placeholder="Chọn hoặc gõ vị trí">
+          <datalist id="spos-list">${boot.positions.map(p => `<option value="${esc(p.label)}">`).join("")}</datalist>
+          <div class="muted">Trang thi chọn sẵn vị trí này nếu là 1 trong ${boot.positions.length} vị trí thi.</div></div>
+        <div class="field"><label>Chi nhánh</label><input type="text" id="sbr2" list="sbr-list" value="${esc(x.branch)}" maxlength="100">
+          <datalist id="sbr-list">${branches.map(b => `<option value="${esc(b)}">`).join("")}</datalist></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Trạng thái</label><select id="sact"><option value="1"${x.active ? " selected" : ""}>Đang làm</option><option value="0"${x.active ? "" : " selected"}>Đã nghỉ</option></select></div>
+        <div class="field"><label>Ghi chú</label><input type="text" id="snote" value="${esc(x.note)}" maxlength="500"></div>
+      </div>`;
+    const m = openModal(e ? "Sửa nhân viên " + esc(e.empId) : "Thêm nhân viên", body,
+      `<button class="btn" data-close>Hủy</button><button class="btn pri" id="ssave">Lưu nhân viên</button>`);
+    $("#sid", m).focus();
+    $("#ssave", m).onclick = async () => {
+      const emp = {
+        originalEmpId: e ? e.empId : "", empId: $("#sid", m).value.trim(), name: $("#sname", m).value.trim().replace(/\s+/g, " "),
+        position: $("#spos2", m).value.trim(), branch: $("#sbr2", m).value.trim(), active: $("#sact", m).value === "1", note: $("#snote", m).value.trim()
+      };
+      let err = "";
+      if (!emp.empId) err = "Vui lòng nhập mã nhân viên.";
+      else if (!emp.name) err = "Vui lòng nhập họ và tên.";
+      else if ((staff || []).some(s => s !== e && norm(s.empId) === norm(emp.empId))) err = "Mã nhân viên " + emp.empId + " đã có trong danh sách.";
+      if (err) { toast(err, true); return; }
+      $("#ssave", m).disabled = true;
+      try {
+        const d = await api("admin.employees.save", { employee: emp });
+        staff = d.employees; logs = null;
+        closeModal(); drawStaff();
+        toast(e ? "Đã cập nhật " + emp.name + "." : "Đã thêm " + emp.name + ".");
+      } catch (er) {
+        toast(er.message, true);
+        $("#ssave", m).disabled = false;
+      }
+    };
+  }
+
+  async function exportStaff() {
+    await run(async () => {
+      if (!staff) { const d = await api("admin.employees.list"); staff = d.employees; }
+      await loadScript(XLSX_CDN);
+      const X = window.XLSX;
+      const rows = [["Mã NV", "Họ và tên", "Vị trí hiện tại", "Chi nhánh", "Trạng thái", "Ghi chú"]]
+        .concat(staff.map(e => [e.empId, e.name, e.position, e.branch, e.active ? "Đang làm" : "Nghỉ", e.note]));
+      const ws = X.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [12, 26, 16, 18, 11, 40].map(w => ({ wch: w }));
+      const guide = X.utils.aoa_to_sheet([
+        ["CÁCH NHẬP FILE NÀY VÀO TRANG QUẢN TRỊ (Nhân viên → ⬆ Nhập Excel)"],
+        ["• Giữ nguyên dòng tiêu đề. Bắt buộc có cột Mã NV và Họ và tên."],
+        ["• Mã NV đã có trong danh sách → cập nhật người đó. Mã mới → thêm người mới."],
+        ["• Mã NV bắt đầu bằng số 0 (VD 00123): định dạng cột Mã NV là Văn bản (Text) trước khi gõ, để Excel không bỏ số 0."],
+        ["• Vị trí thi: " + boot.positions.map(p => p.label).join(", ") + ". Vị trí khác (Bếp, Bảo vệ...) vẫn lưu được."],
+        ["• Trạng thái: Đang làm hoặc Nghỉ (để trống = Đang làm). Người đã nghỉ không vào thi được."],
+        ["• Muốn xóa người: không xóa trong file, hãy bấm Xóa hoặc Nghỉ việc trên trang quản trị."],
+        ["• Mỗi lần nhập tối đa " + STAFF_MAX_IMPORT + " người. Nếu có dòng lỗi, hệ thống không nhập dòng nào cho đến khi sửa xong."]
+      ]);
+      guide["!cols"] = [{ wch: 110 }];
+      const wb = X.utils.book_new();
+      X.utils.book_append_sheet(wb, ws, "Nhân viên");
+      X.utils.book_append_sheet(wb, guide, "Hướng dẫn");
+      const now = new Date();
+      X.writeFile(wb, "NhanVien_" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + ".xlsx");
+      toast(staff.length ? "Đã xuất " + staff.length + " nhân viên ra Excel." : "Đã tải file mẫu (danh sách đang trống).");
+    });
+  }
+
+  // Nhận cột trong file nhân sự theo tiêu đề (không phân biệt dấu, hoa thường). Trả null nếu dòng không phải tiêu đề.
+  function staffCols(head) {
+    const col = {
+      id: pickCol(head, h => /^(ma nv|ma nhan vien|ma so nhan vien|ma so nv|msnv|ma so|ma)$/.test(h), h => /^ma (nv|nhan vien|so nhan vien|so nv)\b/.test(h),
+        h => h.startsWith("ma") && !/thue|cccd|cmnd|can cuoc|chi nhanh|cua hang|co so|bo phan|phong|don vi|ngan hang|bao hiem|bhxh|so the|cham cong/.test(h)),
+      name: pickCol(head, h => /^(ho va ten|ho ten|ho va ten nhan vien|ho ten nhan vien|ten nhan vien|ten day du|nhan vien)$/.test(h), h => /^ho (va )?ten\b/.test(h)),
+      ho: pickCol(head, h => /^(ho|ho dem|ho va dem|ho va ten dem|ho lot|ho va ten lot|ho chu lot)$/.test(h)),
+      ten: pickCol(head, h => h === "ten"),
+      pos: pickCol(head, h => h.startsWith("vi tri"), h => /^(chuc vu|chuc danh)/.test(h), h => h.startsWith("bo phan")),
+      branch: pickCol(head, h => /^(chi nhanh|co so|cua hang|nha hang|dia diem|noi lam viec|don vi)/.test(h)),
+      status: pickCol(head, h => /^(trang thai|tinh trang)/.test(h)),
+      note: pickCol(head, h => h.startsWith("ghi chu"))
+    };
+    return col.id >= 0 && (col.name >= 0 || col.ten >= 0) ? col : null;
+  }
+  // Trạng thái trong file nhân sự: "Chính thức", "Thử việc"... = đang làm; "Nghỉ việc", "Thôi việc"... = nghỉ. Trả true/false, hoặc null nếu không rõ.
+  function staffActive(st) {
+    if (!st) return true;
+    if (/^(nghi|nghi viec|da nghi|da nghi viec|thoi viec|da thoi viec|nghi han|nghi lam)$/.test(st)) return false;
+    if (/^(dang lam|dang lam viec|dang di lam|di lam|lam viec|chinh thuc|nhan vien chinh thuc|thu viec|thoi vu|hoc viec|part ?time|full ?time|ban thoi gian|toan thoi gian|cong tac vien)$/.test(st)) return true;
+    return null;
+  }
+
+  // Đọc 1 dòng Excel thành nhân viên + kiểm tra giống server. Trả { e, error, kind }.
+  function parseStaffRow(get, rowNo, col) {
+    const stRaw = String(get("status")).trim();
+    const name = col.name >= 0 ? String(get("name")) : (String(get("ho")).trim() + " " + String(get("ten")).trim());
+    const act = staffActive(norm(stRaw).replace(/\s+/g, " ").trim());
+    const e = {
+      rowNo, empId: String(get("id")).trim(), name: name.trim().replace(/\s+/g, " "),
+      position: String(get("pos")).trim(), branch: String(get("branch")).trim(), note: String(get("note")).trim(), active: act !== false
+    };
+    const p = boot.positions.find(x => norm(x.label) === norm(e.position) || x.id === norm(e.position));
+    if (p) e.position = p.label;
+    let error = "";
+    if (/\uFFFD/.test(JSON.stringify(e))) error = "Lỗi bảng mã chữ (font): hãy lưu lại file dạng Excel (.xlsx) hoặc \"CSV UTF-8\" rồi nhập lại.";
+    else if (!e.empId) error = "Thiếu mã nhân viên.";
+    else if (e.empId.length > 50) error = "Mã nhân viên tối đa 50 ký tự.";
+    else if (!e.name) error = "Thiếu họ và tên.";
+    else if (e.name.length > 100) error = "Họ và tên quá dài.";
+    else if (e.position.length > 50) error = "Vị trí quá dài.";
+    else if (e.branch.length > 100) error = "Chi nhánh quá dài.";
+    else if (e.note.length > 500) error = "Ghi chú quá dài.";
+    else if (act === null) error = "Trạng thái \"" + stRaw + "\" chưa rõ là đang làm hay đã nghỉ. Sửa thành \"Đang làm\" hoặc \"Nghỉ\".";
+    let kind = "add";
+    const old = (staff || []).find(s => norm(s.empId) === norm(e.empId));
+    if (old) {
+      kind = (old.name === e.name && old.position === e.position && old.branch === e.branch && old.note === e.note && old.active === e.active) ? "same" : "update";
+    }
+    e.active = e.active ? "Đang làm" : "Nghỉ";
+    return { e, error, kind };
+  }
+
+  async function importStaff(file) {
+    await run(async () => {
+      if (!staff) { const d = await api("admin.employees.list"); staff = d.employees; }
+      await loadScript(XLSX_CDN);
+      const t = await readTableFile(file, staffCols);
+      if (!t) throw new Error("Không tìm thấy dòng tiêu đề có cột Mã NV và Họ và tên (hoặc Họ + Tên) trong file. Hãy bấm ⬇ Xuất Excel để lấy file mẫu đúng định dạng.");
+      const { aoa, col } = t;
+      const items = [], seen = {};
+      for (let i = t.start; i < aoa.length; i++) {
+        const r = aoa[i];
+        if (!r || r.every(v => String(v).trim() === "")) continue;
+        const rowNo = t.rowOffset + i;
+        const it = parseStaffRow(k => col[k] >= 0 ? (r[col[k]] === undefined ? "" : r[col[k]]) : "", rowNo, col);
+        // Dòng tổng cộng / chữ ký cuối file (không có cả mã lẫn họ tên) → bỏ qua; có tên mà thiếu mã vẫn báo lỗi
+        if (!it.e.empId && !it.e.name) continue;
+        const k = norm(it.e.empId);
+        if (!it.error && k) {
+          if (seen[k]) it.error = "Mã NV " + it.e.empId + " lặp lại (đã có ở dòng " + seen[k] + ").";
+          else seen[k] = rowNo;
+        }
+        items.push(it);
+      }
+      if (!items.length) throw new Error("File không có dòng nhân viên nào.");
+      const used = { id: "Mã NV", name: "Họ và tên", ho: "Họ", ten: "Tên", pos: "Vị trí", branch: "Chi nhánh", status: "Trạng thái", note: "Ghi chú" };
+      const mapped = Object.keys(used).filter(k => col[k] >= 0 && !(k === "ho" || k === "ten") || ((k === "ho" || k === "ten") && col.name < 0 && col[k] >= 0))
+        .map(k => used[k] + " ← \"" + String(t.rawHead[col[k]]).trim() + "\"");
+      const usedIdx = new Set(Object.keys(used).map(k => col[k]).filter(i => i >= 0));
+      const ignored = t.rawHead.map((h, i) => usedIdx.has(i) ? "" : String(h).trim()).filter(Boolean);
+      const where = (t.sheetCount > 1 ? "sheet \"" + t.sheet + "\", " : "") + "tiêu đề ở dòng " + t.headRow;
+      showStaffImportPreview(file.name, items, { where, mapped, ignored });
+    });
+  }
+
+  function showStaffImportPreview(fileName, items, info) {
+    const errs = items.filter(i => i.error);
+    const n = k => items.filter(i => !i.error && i.kind === k).length;
+    const tooMany = items.length > STAFF_MAX_IMPORT;
+    const shown = (errs.length ? errs.concat(items.filter(i => !i.error)) : items).slice(0, 200);
+    const kindBadge = k => k === "add" ? '<span class="badge b-ok">Thêm mới</span>' : (k === "update" ? '<span class="badge b-wait">Cập nhật</span>' : '<span class="badge b-gray">Không đổi</span>');
+    const body = `
+      <p><b>${esc(fileName)}</b>: ${items.length} dòng · <span class="badge b-ok">${n("add")} thêm mới</span> <span class="badge b-wait">${n("update")} cập nhật</span> <span class="badge b-gray">${n("same")} không đổi</span>${errs.length ? ` <span class="badge b-bad">${errs.length} dòng lỗi</span>` : ""}</p>
+      ${info ? `<p class="muted" style="margin-top:-4px">Đọc ${esc(info.where)}. Cột nhận được: ${info.mapped.map(esc).join(" · ")}.${info.ignored.length ? " Bỏ qua: " + info.ignored.map(esc).join(", ") + "." : ""}</p>` : ""}
+      ${errs.length ? '<div class="sumbox" style="background:var(--redl);color:var(--red)">Có dòng lỗi nên chưa nhập được. Sửa các dòng bên dưới trong file Excel rồi chọn lại file.</div>' : ""}
+      ${tooMany ? `<div class="sumbox" style="background:var(--redl);color:var(--red)">Mỗi lần nhập tối đa ${STAFF_MAX_IMPORT} người. Hãy chia file thành nhiều phần.</div>` : ""}
+      ${!errs.length && !tooMany ? '<p class="muted">Người chưa có trong file vẫn giữ nguyên trong danh sách. Sau khi nhập, trang thi chỉ cho mã NV có trong danh sách và đang làm vào thi.</p>' : ""}
+      <div class="tbl-wrap"><table>
+        <thead><tr><th class="num">Dòng</th><th>Kết quả</th><th>Mã NV</th><th>Họ và tên</th><th>Vị trí</th><th>Chi nhánh</th><th>Trạng thái</th></tr></thead>
+        <tbody>${shown.map(i => `<tr${i.error ? ' class="row-err"' : ""}>
+          <td class="num">${i.e.rowNo}</td>
+          <td>${i.error ? `<span class="badge b-bad">Lỗi</span><div class="muted" style="color:var(--red)">${esc(i.error)}</div>` : kindBadge(i.kind)}</td>
+          <td>${esc(i.e.empId || "—")}</td><td>${esc(i.e.name)}</td><td>${esc(i.e.position)}</td><td>${esc(i.e.branch)}</td><td>${esc(i.e.active)}</td></tr>`).join("")}</tbody>
+      </table></div>
+      ${items.length > shown.length ? `<p class="muted">… và ${items.length - shown.length} dòng nữa.</p>` : ""}`;
+    const ok = !errs.length && !tooMany;
+    const m = openModal("Nhập danh sách nhân viên từ Excel", body,
+      `<button class="btn" data-close>${ok ? "Hủy" : "Đóng"}</button>${ok ? `<button class="btn pri" id="simpgo">Nhập ${items.length} nhân viên</button>` : ""}`, true);
+    if (!ok) return;
+    $("#simpgo", m).onclick = async () => {
+      $("#simpgo", m).disabled = true;
+      try {
+        const d = await api("admin.employees.import", { employees: items.map(i => i.e) });
+        staff = d.employees; logs = null;
+        closeModal(); drawStaff();
+        toast(`Đã nhập: ${d.added} người mới, ${d.updated} người cập nhật${d.unchanged ? ", " + d.unchanged + " người không đổi" : ""}.`);
+      } catch (er) {
+        if (er.data && Array.isArray(er.data.errors)) {
+          const byRow = {}; er.data.errors.forEach(x => byRow[x.row] = x.error);
+          items.forEach(i => { if (byRow[i.e.rowNo]) i.error = byRow[i.e.rowNo]; });
+          showStaffImportPreview(fileName, items, info);
+        }
+        toast(er.message, true);
+        const b = $("#simpgo"); if (b) b.disabled = false;
+      }
+    };
+  }
+
   /* ============================== TÀI KHOẢN ============================== */
   async function renderAccounts() {
     const main = $("#main");
@@ -1286,9 +1618,10 @@
   /* ============================== NHẬT KÝ ============================== */
   const LOG_GROUPS = [
     ["", "Mọi hành động"], ["grade", "Chấm / sửa điểm"], ["reset", "Cho thi lại"], ["bank", "Ngân hàng đề"],
-    ["period", "Đợt thi"], ["account", "Tài khoản & mật khẩu"], ["login", "Đăng nhập / đăng xuất"], ["export", "Xuất Excel / PDF"]
+    ["period", "Đợt thi"], ["staff", "Nhân viên"], ["account", "Tài khoản & mật khẩu"], ["login", "Đăng nhập / đăng xuất"], ["export", "Xuất Excel / PDF"]
   ];
   function logGroup(action) {
+    if (/nhân viên/.test(action)) return "staff";
     if (/điểm|Chấm bài/.test(action) && !/phiếu/.test(action)) return "grade";
     if (/thi lại/.test(action)) return "reset";
     if (/câu hỏi/.test(action)) return "bank";

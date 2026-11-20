@@ -48,6 +48,10 @@ LOGS = [{"time": 1790000000000, "username": "lan", "name": "Chị Lan", "action"
         {"time": 1789980000000, "username": "admin", "name": "Quản trị chính", "action": "Đăng nhập", "target": "", "detail": ""}]
 IMPORTED = []
 RESET = []
+STAFF = [{"empId": "TS0123", "name": "Nguyễn Văn An", "position": "Phục Vụ", "positionId": "phucvu", "branch": "Quận 1", "active": True, "note": "", "updatedAt": 0},
+         {"empId": "TS0200", "name": "Lê Thu Hà", "position": "Bếp", "positionId": "", "branch": "Quận 7", "active": False, "note": "Nghỉ T10", "updatedAt": 0}]
+STAFF_SAVED, STAFF_IMPORTED, STAFF_DELETED, STARTS = [], [], [], []
+STAFF_ON = {"v": False}   # trang thi: server báo đã có danh sách nhân viên hay chưa
 BANK = [{"id": "PV-TN-001", "positionId": "phucvu", "positionLabel": "Phục Vụ", "type": "TN", "q": "Câu có sẵn", "options": ["a", "b", "c", "d"], "answer": 0, "points": 3, "active": True, "guide": ""},
         {"id": "PV-TL-001", "positionId": "phucvu", "positionLabel": "Phục Vụ", "type": "TL", "q": "Tự luận 1", "options": ["", "", "", ""], "answer": None, "points": 2, "active": True, "guide": "- Chào khách (1đ)"}]
 VOIDED = {"key": "huy:2", "voided": True, "voidedAt": 1789500000000, "voidedBy": "Anh Hùng", "voidReason": "Mất điện"}
@@ -56,7 +60,7 @@ RESULT = {"key": "s1", "row": 2, "time": 1789000000000, "name": "Nguyễn Văn A
 def api(route):
     req = route.request
     if req.method == "GET":   # trang thi lấy danh sách kỳ thi
-        return route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True, "periods": [{"name": "Quý 4/2026", "duration": 45, "mcqCount": 10, "essayCount": 4}, {"name": "Đợt ngắn", "duration": 30, "mcqCount": 5, "essayCount": 2}], "mcqCount": 10, "essayCount": 4}))
+        return route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True, "periods": [{"name": "Quý 4/2026", "duration": 45, "mcqCount": 10, "essayCount": 4}, {"name": "Đợt ngắn", "duration": 30, "mcqCount": 5, "essayCount": 2}], "mcqCount": 10, "essayCount": 4, "staffList": STAFF_ON["v"]}))
     b = json.loads(req.post_data or "{}"); a = b.get("action")
     r = {"result": "success"}
     me = ME.get(b.get("token"), ME["a" * 64])
@@ -72,6 +76,21 @@ def api(route):
         ACC_SAVED.append(b["account"]); x = dict(b["account"]); x.pop("password", None); x["lastLogin"] = None
         r = {"result": "success", "accounts": ACCOUNTS + [x]}
     elif a == "admin.log.list": r = {"result": "success", "logs": LOGS, "total": len(LOGS)}
+    elif a == "admin.employees.list": r = {"result": "success", "employees": STAFF}
+    elif a == "admin.employees.save":
+        STAFF_SAVED.append(b["employee"]); e = dict(b["employee"]); orig = e.pop("originalEmpId", "")
+        e["positionId"] = "phucvu" if e.get("position") == "Phục Vụ" else ""; e["updatedAt"] = 0
+        STAFF[:] = [x for x in STAFF if x["empId"] != orig] + [e]
+        r = {"result": "success", "employees": STAFF}
+    elif a == "admin.employees.delete":
+        STAFF_DELETED.append(b["empId"]); STAFF[:] = [x for x in STAFF if x["empId"] != b["empId"]]
+        r = {"result": "success", "employees": STAFF}
+    elif a == "admin.employees.import":
+        STAFF_IMPORTED.append(b["employees"])
+        for e in b["employees"]:
+            e = dict(e, active=e["active"] != "Nghỉ", positionId="phucvu" if e["position"] == "Phục Vụ" else "", updatedAt=0); e.pop("rowNo", None)
+            STAFF[:] = [x for x in STAFF if x["empId"].lower() != e["empId"].lower()] + [e]
+        r = {"result": "success", "employees": STAFF, "added": 1, "updated": 1, "unchanged": 1}
     elif a == "admin.results.list": r = {"result": "success", "results": [dict(RESULT, **VOIDED)] if b.get("voided") else [RESULT]}
     elif a == "admin.results.get":
         item = dict(RESULT, passPct=70, essayScores=None, detail="", essaysText=[], version=0, guides={"PV-TL-001": "- Chào khách (1đ)"},
@@ -90,7 +109,15 @@ def api(route):
     elif a == "admin.periods.save": SAVED.append(b["period"])
     elif a == "admin.reports.stats": r = {"result": "success", "stats": STATS, "trend": TREND}
     elif a == "admin.bank.list": r = {"result": "success", "questions": BANK}
-    elif a == "start": r = {"result": "success", "sessionId": "s1", "name": b["name"], "empId": b["empId"], "positionId": "phucvu", "positionLabel": "Phục Vụ", "period": b["period"], "startedAt": 0, "endsAt": 45 * 60000, "serverNow": 0,
+    elif a == "lookup":
+        e = next((x for x in STAFF if x["empId"].lower() == b["empId"].strip().lower()), None)
+        if not STAFF_ON["v"]: r = {"result": "success", "required": False}
+        elif not e: r = {"result": "error", "code": "NOT_FOUND", "required": True, "error": "Mã nhân viên " + b["empId"] + " không có trong danh sách nhân viên."}
+        elif not e["active"]: r = {"result": "error", "code": "NOT_FOUND", "required": True, "error": "Mã nhân viên " + b["empId"] + " đang ở trạng thái đã nghỉ việc."}
+        else: r = {"result": "success", "required": True, "empId": e["empId"], "name": e["name"], "positionId": e["positionId"], "position": e["position"]}
+    elif a == "start" and STAFF_ON["v"] and not any(x["empId"].lower() == b["empId"].lower() and x["active"] for x in STAFF):
+        r = {"result": "error", "code": "NOT_FOUND", "error": "Mã nhân viên không có trong danh sách."}
+    elif a == "start": STARTS.append(b); r = {"result": "success", "sessionId": "s1", "name": b["name"] or next((x["name"] for x in STAFF if x["empId"].lower() == b["empId"].lower()), ""), "empId": b["empId"], "positionId": "phucvu", "positionLabel": "Phục Vụ", "period": b["period"], "startedAt": 0, "endsAt": 45 * 60000, "serverNow": 0,
                             "mcq": [{"id": f"PV-TN-{i:03d}", "q": f"Câu {i}", "points": 3, "options": ["a", "b", "c", "d"]} for i in range(1, 11)],
                             "essay": [{"id": f"PV-TL-{i:03d}", "q": f"Tự luận {i}", "points": 2} for i in range(1, 5)]}
     route.fulfill(status=200, content_type="application/json", body=json.dumps(r))
@@ -152,7 +179,7 @@ def main():
         assert "2 dòng lỗi" in mt and "PV-TN-999" in mt and "Bếp" in mt and pg.locator("#impgo").count() == 0, mt[:600]
         pg.locator(".modal [data-close]").first.click()
         good = head + ",Phục Vụ,TN,Câu mới?,x,y,,,B,3,,\nPV-TL-001,Phục Vụ,TL,Tự luận sửa,,,,,,2,Tạm ẩn,- Ý 1\n"
-        pg.locator("#bfile").set_input_files(files=[{"name": "de.csv", "mimeType": "text/csv", "buffer": good.encode("utf-8")}]); pg.wait_for_timeout(1000)
+        pg.locator("#bfile").set_input_files(files=[{"name": "de.csv", "mimeType": "text/csv", "buffer": b"\xef\xbb\xbf" + good.encode("utf-8")}]); pg.wait_for_timeout(1000)
         assert "1 thêm mới" in pg.locator(".modal").inner_text() and "1 cập nhật" in pg.locator(".modal").inner_text()
         pg.locator("#impgo").click(); pg.wait_for_timeout(800)
         q1, q2 = IMPORTED[-1]
@@ -205,6 +232,86 @@ def main():
         pg.select_option("#lact", ""); pg.select_option("#luser", "admin"); pg.wait_for_timeout(200)
         assert "2 dòng" in vis.inner_text()
         print("✓ Quản lý: thêm tài khoản riêng, xem và lọc nhật ký thao tác")
+
+        # 1b2) Quản lý: danh sách nhân viên
+        vis.locator("[data-tab=staff]").click(); pg.wait_for_timeout(600)
+        txt = vis.inner_text()
+        assert "Nguyễn Văn An" in txt and "Lê Thu Hà" not in txt, "mặc định chỉ hiện người đang làm"
+        assert "2 nhân viên" in txt and "1 đang làm" in txt and "Trang thi đang kiểm tra mã NV" in txt, txt[:400]
+        pg.select_option("#sst", ""); pg.wait_for_timeout(200)
+        assert "Lê Thu Hà" in vis.inner_text() and "Đã nghỉ" in vis.inner_text()
+        pg.select_option("#sbr", "Quận 7"); pg.wait_for_timeout(200)
+        assert "Nguyễn Văn An" not in vis.inner_text() and "1 nhân viên" in vis.inner_text()
+        pg.select_option("#sbr", ""); pg.wait_for_timeout(200)
+        vis.locator("#snew").click(); pg.wait_for_timeout(300)
+        pg.locator("#sid").fill("ts0123"); pg.locator("#sname").fill("Trùng Mã"); pg.locator("#ssave").click(); pg.wait_for_timeout(300)
+        assert not STAFF_SAVED, "mã trùng (không phân biệt hoa thường) → báo ngay, không gửi"
+        pg.locator("#sid").fill("TS0300"); pg.locator("#sname").fill("  Phạm   Minh  "); pg.locator("#spos2").fill("Pha Chế"); pg.locator("#sbr2").fill("Quận 1")
+        pg.locator("#ssave").click(); pg.wait_for_timeout(800)
+        e = STAFF_SAVED[-1]
+        assert e["empId"] == "TS0300" and e["name"] == "Phạm Minh" and e["position"] == "Pha Chế" and e["active"] is True and e["originalEmpId"] == "", e
+        assert "Phạm Minh" in vis.inner_text()
+        pg.once("dialog", lambda d: d.accept())
+        vis.locator("tr[data-id='TS0123'] [data-act=toggle]").click(); pg.wait_for_timeout(800)
+        e = STAFF_SAVED[-1]
+        assert e["originalEmpId"] == "TS0123" and e["active"] is False and e["name"] == "Nguyễn Văn An", e
+        pg.once("dialog", lambda d: d.accept())
+        vis.locator("tr[data-id='TS0300'] [data-act=del]").click(); pg.wait_for_timeout(800)
+        assert STAFF_DELETED == ["TS0300"], STAFF_DELETED
+        vis.locator("[data-tab=staff]").click(); pg.wait_for_timeout(500)
+        # Nhập Excel: dòng lỗi → không cho nhập
+        head = "Mã NV,Họ và tên,Vị trí hiện tại,Chi nhánh,Trạng thái,Ghi chú\n"
+        bad = head + "TS0500,Võ Bảo,Phục Vụ,Quận 1,Đang làm,\nts0500,Trùng,,,,\n,Không mã,,,,\nTS0600,Ai Đó,,,Nghỉ phép,\n"
+        pg.locator("#sfile").set_input_files(files=[{"name": "nv.csv", "mimeType": "text/csv", "buffer": bad.encode("utf-8")}]); pg.wait_for_timeout(1500)
+        mt = pg.locator(".modal").inner_text()
+        assert "3 dòng lỗi" in mt and "lặp lại" in mt and "Thiếu mã" in mt and "chưa rõ là đang làm hay đã nghỉ" in mt and pg.locator("#simpgo").count() == 0, mt[:600]
+        pg.locator(".modal [data-close]").first.click()
+        good = head + "TS0500,Võ Bảo,phục vụ,Quận 1,,\nTS0123,Nguyễn Văn An,Phục Vụ,Quận 3,Đang làm,Chuyển chi nhánh\nTS0200,Lê Thu Hà,Bếp,Quận 7,Nghỉ,Nghỉ T10\n"
+        pg.locator("#sfile").set_input_files(files=[{"name": "nv.csv", "mimeType": "text/csv", "buffer": good.encode("utf-8")}]); pg.wait_for_timeout(1000)
+        mt = pg.locator(".modal").inner_text()
+        assert "1 thêm mới" in mt and "1 cập nhật" in mt and "1 không đổi" in mt, mt[:500]
+        pg.locator("#simpgo").click(); pg.wait_for_timeout(800)
+        e1, e2, e3 = STAFF_IMPORTED[-1]
+        assert e1["empId"] == "TS0500" and e1["position"] == "Phục Vụ" and e1["active"] == "Đang làm", e1
+        assert e2["branch"] == "Quận 3" and e3["active"] == "Nghỉ", (e2, e3)
+        print("✓ Nhân viên: lọc, thêm (chặn mã trùng), nghỉ việc, xóa, nhập Excel có xem trước và chặn dòng lỗi")
+        # File nhân sự kiểu thực tế: dòng tên công ty ở trên, STT, Họ đệm + Tên tách cột, Chức vụ / Cửa hàng, Tình trạng kiểu nhân sự
+        hr = ("CÔNG TY TNHH THE STREET,,,,,,\nDANH SÁCH NHÂN VIÊN T11,,,,,,\n,,,,,,\n"
+              "STT,Mã số thuế,Mã nhân viên,Họ đệm,Tên,Chức vụ,Cửa hàng,Tình trạng\n"
+              "1,8123,TS0700,Nguyễn Thị Bích,Ngọc,Phục vụ,Quận 1,Chính thức\n2,8124,TS0701,Lê,Minh,Pha chế,Quận 7,Thử việc\n"
+              "3,8125,TS0702,Phạm Văn,Tài,Bếp,Thủ Đức,Nghỉ việc\nTổng cộng: 3 người,,,,,,,\n")
+        pg.locator("#sfile").set_input_files(files=[{"name": "nhansu.csv", "mimeType": "text/csv", "buffer": hr.encode("utf-8")}]); pg.wait_for_timeout(1200)
+        mt = pg.locator(".modal").inner_text()
+        assert "tiêu đề ở dòng 4" in mt and "Mã NV ← \"Mã nhân viên\"" in mt and "Bỏ qua: STT, Mã số thuế" in mt, mt[:600]
+        assert "Nguyễn Thị Bích Ngọc" in mt and "lỗi" not in mt and "3 thêm mới" in mt, mt[:900]
+        pg.locator("#simpgo").click(); pg.wait_for_timeout(800)
+        a, b2, c = STAFF_IMPORTED[-1]
+        assert (a["empId"], a["name"], a["position"], a["active"], a["rowNo"]) == ("TS0700", "Nguyễn Thị Bích Ngọc", "Phục Vụ", "Đang làm", 5), a
+        assert b2["active"] == "Đang làm" and c["active"] == "Nghỉ" and c["position"] == "Bếp", (b2, c)
+        # CSV lưu kiểu ANSI (Windows-1258) vẫn đọc đúng chữ Việt; trạng thái chưa rõ ("Nghỉ phép") → báo lỗi dòng
+        def cp1258(t):
+            import unicodedata
+            out = b""
+            for ch in t:
+                try: out += ch.encode("cp1258")
+                except UnicodeEncodeError:
+                    d = unicodedata.normalize("NFD", ch); tones = "\u0300\u0301\u0303\u0309\u0323"
+                    out += unicodedata.normalize("NFC", "".join(x for x in d if x not in tones)).encode("cp1258") + "".join(x for x in d if x in tones).encode("cp1258")
+            return out
+        ansi = cp1258("Mã NV,Họ và tên,Trạng thái\nTS0800,Đặng Mỹ Linh,Đang làm\nTS0801,Trần Thị Ánh Tuyết,Nghỉ phép\n")
+        pg.locator("#sfile").set_input_files(files=[{"name": "ansi.csv", "mimeType": "text/csv", "buffer": ansi}]); pg.wait_for_timeout(1200)
+        mt = pg.locator(".modal").inner_text()
+        assert "Đặng Mỹ Linh" in mt and "Trần Thị Ánh Tuyết" in mt and "Nghỉ phép" in mt and "1 dòng lỗi" in mt and pg.locator("#simpgo").count() == 0, mt[:600]
+        pg.locator(".modal [data-close]").first.click()
+        print("✓ Nhân viên: đọc được file nhân sự thực tế (dòng tiêu đề ở giữa, Họ/Tên tách cột, trạng thái kiểu nhân sự, CSV ANSI)")
+        with pg.expect_download() as dl:
+            vis.locator("#sexp").click()
+        assert dl.value.suggested_filename.startswith("NhanVien_"), dl.value.suggested_filename
+        pg.locator("#sfile").set_input_files(dl.value.path()); pg.wait_for_timeout(1000)
+        mt = pg.locator(".modal").inner_text()
+        assert "6 không đổi" in mt and "0 thêm mới" in mt and "lỗi" not in mt, mt[:400]
+        pg.locator(".modal [data-close]").first.click()
+        print("✓ Nhân viên: xuất Excel, nhập lại chính file đó được nhận đúng")
 
         # 1c) Người chấm: chỉ thấy tab chấm bài, tên người chấm theo tài khoản, không có nút Cho thi lại
         pg.evaluate("sessionStorage.clear()")
@@ -259,6 +366,30 @@ def main():
         pg.click(".ts-pos-btn[data-id=phucvu]"); pg.click("#start-btn"); pg.wait_for_timeout(800)
         assert "Câu 1" in pg.inner_text("#the-street-quiz-app") and "45:00" >= pg.inner_text("#ts-timer-countdown") > "44:"
         print("✓ Trang thi: tải kỳ thi, bắt đầu bài, đồng hồ 45 phút theo đợt thi")
+        assert STARTS[-1]["name"] == "Nguyễn Văn A", "chưa có danh sách nhân viên: gửi họ tên tự gõ"
+
+        # 2b) Trang thi khi đã có danh sách nhân viên: tra mã NV, tự điền họ tên, chặn mã lạ
+        STAFF_ON["v"] = True
+        pg.evaluate("localStorage.clear()")
+        pg = open_page(wordpress(QUIZ))
+        pg.wait_for_function("document.querySelector('#exam-period') && document.querySelector('#exam-period').options.length > 1", timeout=5000)
+        pg.wait_for_selector("#emp-status")
+        assert pg.get_attribute("#candidate-name", "readonly") is not None, "họ tên không sửa được"
+        pg.select_option("#exam-period", "Quý 4/2026")
+        pg.fill("#emp-id", "999"); pg.wait_for_timeout(1200)
+        assert "không có trong danh sách" in pg.inner_text("#emp-status") and pg.is_disabled("#start-btn"), pg.inner_text("#emp-status")
+        pg.fill("#emp-id", "TS0200"); pg.wait_for_timeout(1200)
+        assert "đã nghỉ" in pg.inner_text("#emp-status") and pg.is_disabled("#start-btn")
+        pg.fill("#emp-id", "ts0123"); pg.wait_for_timeout(1200)
+        assert "Nguyễn Văn An" in pg.inner_text("#emp-status") and pg.input_value("#candidate-name") == "Nguyễn Văn An"
+        assert "selected" in pg.get_attribute(".ts-pos-btn[data-id=phucvu]", "class"), "chọn sẵn vị trí hiện tại"
+        pg.screenshot(path=os.environ.get("SHOT_DIR", "/tmp") + "/trang-thi-ma-nv.png")
+        pg.click(".ts-pos-btn[data-id=letan]")
+        assert not pg.is_disabled("#start-btn")
+        pg.click("#start-btn"); pg.wait_for_timeout(800)
+        assert STARTS[-1]["name"] == "" and STARTS[-1]["empId"] == "ts0123" and STARTS[-1]["positionId"] == "letan", STARTS[-1]
+        STAFF_ON["v"] = False
+        print("✓ Trang thi: có danh sách nhân viên → tra mã NV, tự điền họ tên, chặn mã lạ / người đã nghỉ, vẫn tự chọn vị trí")
 
         # 3) File JS không tải được → hiện thông báo thay vì 'Đang tải' mãi
         pg = browser.new_page(); pg.route(PAGES + "**", lambda r: r.fulfill(status=404, body=""))

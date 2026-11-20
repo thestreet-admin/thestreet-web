@@ -11,7 +11,7 @@ URL công khai: `https://thestreet-admin.github.io/thestreet-web/admin/admin.js`
 Đẩy lên nhánh `main` → GitHub Pages đăng bản mới sau ~1 phút; đoạn nhúng thêm `?v=Date.now()` nên trình duyệt luôn lấy bản mới (file CSS dùng cùng mã `?v`). **Không cần sửa WordPress.**
 
 ## Cấu trúc
-- `admin/admin.js`, `admin/admin.css` — trang quản trị (đăng nhập bằng tên + mật khẩu; Quản lý thấy 6 tab: Tổng quan, Bài thi & Chấm điểm, Ngân hàng đề, Đợt thi, Tài khoản, Nhật ký; Người chấm chỉ thấy tab Bài thi & Chấm điểm).
+- `admin/admin.js`, `admin/admin.css` — trang quản trị (đăng nhập bằng tên + mật khẩu; Quản lý thấy 7 tab: Tổng quan, Bài thi & Chấm điểm, Ngân hàng đề, Đợt thi, Nhân viên, Tài khoản, Nhật ký; Người chấm chỉ thấy tab Bài thi & Chấm điểm).
 - `quiz/quiz.js`, `quiz/quiz.css` — trang thi.
 - `WORDPRESS.md` — đoạn nhúng dán vào widget HTML của Elementor (đã dán, hiếm khi đổi).
 - `preview/` — mở thử trên máy (gọi API thật).
@@ -31,12 +31,14 @@ URL công khai: `https://thestreet-admin.github.io/thestreet-web/admin/admin.js`
 9. Viết giao diện và thông báo bằng **tiếng Việt có dấu**.
 
 ## API (Apps Script) — các action
-Trang thi: `GET` (danh sách đợt thi đang mở), `start`, `submit`.
+Trang thi: `GET` (danh sách đợt thi đang mở + `staffList`), `lookup {empId}` (tra mã NV trong danh sách nhân viên), `start`, `submit`.
 Quản trị (cần `token` từ `admin.login {username, password}`; tên `admin` hoặc để trống = quản trị chính): `admin.bootstrap` (trả kèm `me` = người đang đăng nhập), `admin.bank.list|save|toggle|delete`, `admin.periods.save|delete`,
-`admin.results.list|get|grade|reset|release`, `admin.bank.import`, `admin.reports.stats|export|pdf`, `admin.accounts.list|save|delete`, `admin.account.password`, `admin.log.list`, `admin.logout`.
+`admin.results.list|get|grade|reset|release`, `admin.bank.import`, `admin.reports.stats|export|pdf`, `admin.accounts.list|save|delete`, `admin.employees.list|save|delete|import`, `admin.account.password`, `admin.log.list`, `admin.logout`.
 - `admin.reports.stats` và `admin.reports.export` trả kèm `trend`: mỗi đợt có bài nộp một dòng (xếp theo giờ mở đợt), gồm `count, graded, passed, passRate, avgPct, avgMcqPct, passPct, byPosition{<vị trí>: …}`; luôn tính mọi đợt, không theo bộ lọc. Tab Tổng quan vẽ biểu đồ xu hướng bằng SVG tự viết (`drawTrend`), không dùng thư viện.
+- **Danh sách nhân viên**: `GET` trả `staffList: true` khi tab NhanVien có dữ liệu → trang thi đổi thứ tự (Mã NV trước), gọi `lookup` sau khi gõ mã (chờ 0,5 s), họ tên chỉ đọc và tự điền, chọn sẵn vị trí hiện tại nếu là vị trí thi; mã lạ / đã nghỉ (`NOT_FOUND`) thì khóa nút Bắt đầu. Mạng lỗi khi tra mã vẫn cho bấm Bắt đầu, server kiểm tra lại. Khi có danh sách, `start` gửi `name: ""` (server lấy họ tên theo danh sách). Tab Nhân viên (chỉ Quản lý): lọc chi nhánh/vị trí/trạng thái, thêm/sửa, Nghỉ việc/Đi làm lại, xóa, nhập/xuất Excel (xem trước, chặn dòng lỗi, tối đa 1000 người).
 - `admin.results.list {voided: true}` = bài đã hủy khi cho thi lại (mã `huy:…`, chỉ xem/PDF). `admin.results.reset` gửi kèm `reason`.
 - `admin.results.get` trả `guides` (đáp án mẫu theo mã câu tự luận), `version`, `editing` (người khác đang mở bài). `admin.results.grade` gửi `expectVersion`; lỗi `CONFLICT` → hỏi người dùng, đồng ý thì gửi lại với `force: true`. Đóng modal chấm → `admin.results.release`.
+- Đọc file nhập (ngân hàng đề + nhân viên) dùng chung `readTableFile`: tự tìm sheet và dòng tiêu đề trong 20 dòng đầu (file nhân sự hay có tên công ty ở trên), CSV tự nhận UTF-8 (có/không BOM) hoặc Windows-1258, chuẩn hóa chữ Việt về NFC, ô có ký tự lỗi `\uFFFD` → báo lỗi bảng mã. Nhân viên: nhận cột theo nhiều tên gọi (`staffCols`: Mã nhân viên/MSNV, Họ và tên hoặc Họ đệm + Tên, Chức vụ/Bộ phận, Cửa hàng/Cơ sở, Tình trạng), trạng thái kiểu nhân sự (`staffActive`: Chính thức/Thử việc = Đang làm; Nghỉ việc/Thôi việc = Nghỉ; giá trị khác như "Nghỉ phép" → lỗi dòng). Xem trước ghi rõ đọc sheet nào, dòng tiêu đề nào, cột nào ↔ tiêu đề nào, cột bị bỏ qua.
 - Nhập Excel ngân hàng đề đọc file ở trình duyệt (thư viện xlsx từ CDN; file .csv đọc dạng chữ UTF-8), kiểm tra từng dòng, có lỗi thì không gửi. Kiểm thử chạy offline: đặt `XLSX_LOCAL=<đường dẫn xlsx.full.min.js>`.
 Người chấm gọi chức năng khác sẽ nhận lỗi `FORBIDDEN` → giao diện ẩn luôn các tab/nút đó (`isMgr()`). Tên người chấm: tài khoản riêng lấy theo tài khoản, chỉ quản trị chính mới gõ tay (`isMaster()`).
 Các thao tác ngân hàng đề trả kèm `bank` + `bankIssues` để không phải gọi lại `admin.bootstrap`.
