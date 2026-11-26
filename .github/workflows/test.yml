@@ -10,6 +10,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: node --check admin/admin.js && node --check quiz/quiz.js
+      - run: node --check admin/admin.js && node --check quiz/quiz.js && node --check voucher/voucher.js && node --check voucher-admin/voucher-admin.js
       - run: pip install playwright && python -m playwright install --with-deps chromium
       - run: python tests/ui_test.py
+      - run: python tests/voucher_ui_test.py
