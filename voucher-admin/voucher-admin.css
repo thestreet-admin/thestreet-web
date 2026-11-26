@@ -1,0 +1,74 @@
+/* THE STREET - Trang quản trị voucher. Mọi selector nằm trong #ts-voucher-admin để không ảnh hưởng theme WordPress.
+   Màu thương hiệu: xanh #005034, vàng #FCB813, đỏ #DA2430, đen #000000 */
+#ts-voucher-admin{--g:#005034;--g2:#003322;--gl:#F0F7F3;--gm:#D6E8DE;--y:#FCB813;--yl:#FFF1CC;--r:#DA2430;--rl:#fdecec;--ink:#000;--mut:#66756d;--line:#e1e9e4;
+  font-family:Arial,Helvetica,sans-serif;color:var(--ink);background:var(--gl);min-height:85vh;padding:16px;box-sizing:border-box;font-size:14px;line-height:1.45;text-align:left;position:relative}
+#ts-voucher-admin *{box-sizing:border-box}
+#ts-voucher-admin .wrap,#ts-voucher-admin .login,#ts-voucher-admin .modal{color:var(--ink)}
+#ts-voucher-admin .wrap{max-width:1100px;margin:0 auto}
+#ts-voucher-admin h3{margin:0;color:var(--g);font-size:17px}
+#ts-voucher-admin .brand{font-weight:900;font-size:22px;color:var(--g);letter-spacing:3px}
+#ts-voucher-admin .brand small{display:block;font-size:10px;color:var(--r);letter-spacing:3px;font-weight:700}
+#ts-voucher-admin .top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#fff;border-radius:14px;padding:14px 18px;margin-bottom:12px;border-bottom:4px solid var(--y)}
+#ts-voucher-admin .right,#ts-voucher-admin .btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#ts-voucher-admin .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+#ts-voucher-admin .tab{border:0;background:#fff;color:var(--g2);padding:10px 16px;border-radius:10px;font-weight:700;cursor:pointer;font-family:inherit}
+#ts-voucher-admin .tab.on{background:var(--g);color:#fff}
+#ts-voucher-admin .card{background:#fff;border-radius:14px;padding:18px;margin-bottom:14px;box-shadow:0 2px 12px rgba(0,80,52,.07)}
+#ts-voucher-admin .card-h{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+#ts-voucher-admin .muted{color:var(--mut);font-size:12px}
+#ts-voucher-admin .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+#ts-voucher-admin input[type=text],#ts-voucher-admin input[type=password],#ts-voucher-admin input[type=number],#ts-voucher-admin input[type=datetime-local],#ts-voucher-admin select,#ts-voucher-admin textarea{
+  border:1.5px solid #c9d8cf;border-radius:8px;padding:8px 10px;font-size:14px;background:#fff;color:var(--ink);font-family:inherit;max-width:100%}
+#ts-voucher-admin input[readonly]{background:#f2f4f3;color:var(--mut)}
+#ts-voucher-admin textarea{width:100%;min-height:70px;resize:vertical}
+#ts-voucher-admin input:focus,#ts-voucher-admin select:focus,#ts-voucher-admin textarea:focus{outline:2px solid var(--g);outline-offset:0}
+#ts-voucher-admin .btn{border:0;border-radius:8px;padding:9px 14px;font-weight:700;font-size:13px;cursor:pointer;background:var(--gm);color:var(--g2);white-space:nowrap;font-family:inherit}
+#ts-voucher-admin .btn:hover{filter:brightness(.96)}
+#ts-voucher-admin .btn.pri{background:var(--g);color:#fff}
+#ts-voucher-admin .btn.danger{background:var(--rl);color:var(--r)}
+#ts-voucher-admin .btn.sm{padding:5px 10px;font-size:12px}
+#ts-voucher-admin .btn:disabled{opacity:.5;cursor:not-allowed}
+#ts-voucher-admin .tbl-wrap{overflow-x:auto}
+#ts-voucher-admin table{border-collapse:collapse;width:100%;min-width:620px}
+#ts-voucher-admin th{background:var(--g);color:#fff;font-size:12px;font-weight:700;text-align:left;padding:8px 10px;white-space:nowrap}
+#ts-voucher-admin td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+#ts-voucher-admin tbody tr:nth-child(even) td{background:var(--gl)}
+#ts-voucher-admin td.num{text-align:right;white-space:nowrap}
+#ts-voucher-admin code{font-family:"Courier New",monospace;font-weight:700;color:var(--g2)}
+#ts-voucher-admin .badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:700;white-space:nowrap;vertical-align:middle}
+#ts-voucher-admin .b-ok{background:var(--gm);color:var(--g2)}
+#ts-voucher-admin .b-bad{background:var(--r);color:#fff}
+#ts-voucher-admin .b-wait{background:var(--y);color:#000}
+#ts-voucher-admin .b-mut{background:#e6e6e6;color:#555}
+#ts-voucher-admin .stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+#ts-voucher-admin .stat{background:var(--gl);border-radius:10px;padding:10px 14px;min-width:170px}
+#ts-voucher-admin .stat .v{font-size:22px;font-weight:900;color:var(--g)}
+#ts-voucher-admin .warn{background:var(--yl);border-left:4px solid var(--y);padding:8px 12px;border-radius:6px;margin-bottom:12px}
+#ts-voucher-admin .offer{background:var(--yl);border:1.5px dashed var(--y);border-radius:8px;padding:6px 10px;margin-bottom:12px;font-weight:700;color:var(--g2);white-space:pre-line}
+#ts-voucher-admin .prog{height:6px;background:var(--line);border-radius:3px;overflow:hidden;width:120px;margin-bottom:3px}
+#ts-voucher-admin .prog div{height:100%;background:var(--g)}
+#ts-voucher-admin .prog div.full{background:var(--r)}
+#ts-voucher-admin .login{max-width:360px;margin:60px auto;background:#fff;border-radius:16px;padding:28px;text-align:center;border-top:6px solid var(--g)}
+#ts-voucher-admin .login form{display:grid;gap:12px;margin-top:18px}
+#ts-voucher-admin .loading{text-align:center;color:var(--mut);padding:40px}
+#ts-voucher-admin .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99990;display:flex;align-items:flex-start;justify-content:center;padding:24px 12px;overflow-y:auto}
+#ts-voucher-admin .modal{background:#fff;border-radius:14px;width:100%;max-width:620px;margin:auto 0}
+#ts-voucher-admin .modal-h{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
+#ts-voucher-admin .modal-b{padding:16px 18px}
+#ts-voucher-admin .modal-f{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--line)}
+#ts-voucher-admin .frm label{display:block;font-weight:700;font-size:13px;color:var(--g2);margin-bottom:12px}
+#ts-voucher-admin .frm label input,#ts-voucher-admin .frm label textarea{display:block;width:100%;margin-top:4px;font-weight:400}
+#ts-voucher-admin .frm label.chk{display:flex;gap:8px;align-items:center;font-weight:400}
+#ts-voucher-admin .frm label.chk input{width:auto;margin:0}
+#ts-voucher-admin .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:560px){#ts-voucher-admin .row2{grid-template-columns:1fr}}
+#ts-voucher-admin .m-err{display:none;background:var(--rl);color:var(--r);padding:8px 10px;border-radius:8px;margin-top:8px}
+#ts-voucher-admin .m-err-inline{color:var(--r);font-size:12px}
+#ts-voucher-admin .modal-b input[type=file]{margin-bottom:8px}
+#ts-voucher-admin .qr{text-align:center}
+#ts-voucher-admin .qr img{width:260px;max-width:100%;image-rendering:pixelated}
+#ts-voucher-admin .qr .muted{word-break:break-all;margin-top:8px}
+#ts-voucher-admin .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--g2);color:#fff;padding:10px 18px;border-radius:10px;z-index:99999;font-weight:700;max-width:90vw}
+#ts-voucher-admin .toast.bad{background:var(--r)}
+#ts-voucher-admin .busy{position:fixed;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--g),var(--y),var(--g));z-index:99999;animation:tsvbusy 1s linear infinite;background-size:200% 100%}
+@keyframes tsvbusy{from{background-position:0 0}to{background-position:200% 0}}

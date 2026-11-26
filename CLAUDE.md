@@ -50,3 +50,11 @@ pip install playwright && python -m playwright install chromium
 python tests/ui_test.py
 ```
 GitHub Actions tự chạy kiểm thử này mỗi lần đẩy code (`.github/workflows/test.yml`).
+
+## Hệ thống voucher (server riêng: `thestreet-appscript/voucher`, Sheet riêng)
+- `voucher/voucher.js|css` — trang khách nhận mã, khung `#ts-voucher-app` (chọn khung cạnh thẻ script như quiz.js). Link kênh: `<trang>?c=<mã CD>&k=<mã kênh>`.
+- `voucher-admin/voucher-admin.js|css` — trang quản trị voucher, khung `#ts-voucher-admin` (chọn khung đang hiển thị như admin.js). Tab: Chiến dịch & kênh (hạn mức, link, QR, nhập kho mã), Khách đã nhận (lọc, xuất Excel), Nhật ký, Cài đặt (đường dẫn trang).
+- URL `/exec` voucher: hằng `API_URL_DEFAULT` trong 2 file JS (hoặc thuộc tính `data-api` trên khung). Không dùng URL của hệ thống thi.
+- Màu thương hiệu: xanh #005034, vàng #FCB813, đỏ #DA2430, đen; font Arial. Selector CSS bắt đầu bằng `#ts-voucher-app` / `#ts-voucher-admin`.
+- API: `GET ?c=`, `claim`; quản trị `admin.login|bootstrap|campaigns.save|campaigns.delete|channels.save|channels.delete|codes.import|codes.removeUnused|claims.list|settings.save|log.list|logout` (lệnh ghi trả kèm `campaigns`).
+- Kiểm thử: `python tests/voucher_ui_test.py` (API giả lập trong file).
