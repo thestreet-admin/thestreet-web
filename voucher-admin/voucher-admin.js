@@ -16,7 +16,7 @@
 (function () {
   "use strict";
   // URL /exec của dự án Apps Script VOUCHER. Điền sau khi triển khai.
-  const API_URL_DEFAULT = "";
+  const API_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbw_qa14laiV2qAq_qlrDt97igV2E-XZQlpvKSS5uGAjwjfS-IBfMsMs5uGEAiDeOy4aeA/exec";
   const XLSX_CDN = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
   const QR_CDN = "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js";
   const TOKEN_KEY = "ts_vadmin_token";

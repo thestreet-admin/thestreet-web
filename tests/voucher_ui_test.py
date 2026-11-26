@@ -143,8 +143,10 @@ def main():
         pg = open_page(elementor(with_api(CUST, "ts-voucher-app")), "?c=KHONGCO")
         assert "Không tìm thấy chương trình" in pg.locator(".show #ts-voucher-app").inner_text()
         pg.close()
-        pg = open_page(elementor(CUST))   # chưa cấu hình URL máy chủ
-        assert "chưa được cấu hình" in pg.locator(".show #ts-voucher-app").inner_text()
+        pg = open_page(elementor(CUST))   # đoạn nhúng thật (không data-api) dùng URL mặc định; không có ?c= → tự vào chiến dịch đang mở duy nhất
+        assert "Tết 2027" in pg.locator(".show #ts-voucher-app").inner_text()
+        js = (ROOT / "voucher/voucher.js").read_text(encoding="utf-8") + (ROOT / "voucher-admin/voucher-admin.js").read_text(encoding="utf-8")
+        assert "AKfycbyaItGOm4q" not in js, "không được dùng URL của hệ thống thi"
         pg.close()
 
         # ===== 3. Trang quản trị =====

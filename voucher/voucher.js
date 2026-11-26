@@ -19,7 +19,7 @@
 
   /* ======================= CẤU HÌNH ======================= */
   // URL /exec của dự án Apps Script VOUCHER (không phải của hệ thống thi). Điền sau khi triển khai.
-  const API_URL_DEFAULT = "";
+  const API_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbw_qa14laiV2qAq_qlrDt97igV2E-XZQlpvKSS5uGAjwjfS-IBfMsMs5uGEAiDeOy4aeA/exec";
 
   const scriptEl = document.currentScript;
   const root = (scriptEl && scriptEl.parentNode && scriptEl.parentNode.querySelector("#ts-voucher-app")) || document.getElementById("ts-voucher-app");
