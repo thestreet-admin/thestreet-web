@@ -43,7 +43,8 @@ def public_get(c):
 def api(route):
     req = route.request
     if req.method == "GET":
-        m = re.search(r"[?&]c=([^&]+)", req.url)
+        m = re.search(r"[?&]cd=([^&]+)", req.url)
+        assert not re.search(r"[?&]c=", req.url), "không gửi tham số c (Apps Script giữ riêng)"
         return route.fulfill(status=200, content_type="application/json", body=json.dumps(public_get(m.group(1) if m else "")))
     b = json.loads(req.post_data or "{}"); a = b.get("action"); S["calls"].append(b)
     r = {"result": "success"}

@@ -51,7 +51,7 @@
   }
 
   async function getApi(cd) {
-    const res = await fetch(API_URL + (cd ? "?c=" + encodeURIComponent(cd) : ""), { method: "GET" });
+    const res = await fetch(API_URL + (cd ? "?cd=" + encodeURIComponent(cd) : ""), { method: "GET" });
     return res.json();
   }
   async function postApi(body) {
