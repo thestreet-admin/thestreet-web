@@ -51,7 +51,7 @@
   }
 
   async function getApi(cd) {
-    const res = await fetch(API_URL + (cd ? "?c=" + encodeURIComponent(cd) : ""), { method: "GET" });
+    const res = await fetch(API_URL + (cd ? "?cd=" + encodeURIComponent(cd) : ""), { method: "GET" });
     return res.json();
   }
   async function postApi(body) {
@@ -178,6 +178,8 @@
       if (!d.ok) {
         st.screen = "error";
         st.loadErr = d.code === "NOT_FOUND" ? "Không tìm thấy chương trình. Vui lòng kiểm tra lại đường link." : (d.error || "Lỗi máy chủ.");
+      } else if (st.cd && !d.campaign) {   // máy chủ cũ không hiểu ?cd= → báo lỗi, không lặp vô hạn
+        st.screen = "error"; st.loadErr = "Máy chủ chưa cập nhật. Vui lòng thử lại sau ít phút.";
       } else if (!st.cd) {
         st.campaigns = d.campaigns || [];
         if (st.campaigns.length === 1) { st.cd = st.campaigns[0].code; return load(); }

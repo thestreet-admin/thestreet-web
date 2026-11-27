@@ -56,5 +56,5 @@ GitHub Actions tự chạy kiểm thử này mỗi lần đẩy code (`.github/w
 - `voucher-admin/voucher-admin.js|css` — trang quản trị voucher, khung `#ts-voucher-admin` (chọn khung đang hiển thị như admin.js). Tab: Chiến dịch & kênh (hạn mức, link, QR, nhập kho mã), Khách đã nhận (lọc, xuất Excel), Nhật ký, Cài đặt (đường dẫn trang).
 - URL `/exec` voucher: hằng `API_URL_DEFAULT` trong 2 file JS (hoặc thuộc tính `data-api` trên khung). Không dùng URL của hệ thống thi.
 - Màu thương hiệu: xanh #005034, vàng #FCB813, đỏ #DA2430, đen; font Arial. Selector CSS bắt đầu bằng `#ts-voucher-app` / `#ts-voucher-admin`.
-- API: `GET ?c=`, `claim`; quản trị `admin.login|bootstrap|campaigns.save|campaigns.delete|channels.save|channels.delete|codes.import|codes.removeUnused|claims.list|settings.save|log.list|logout` (lệnh ghi trả kèm `campaigns`).
+- API: `GET ?cd=` (KHÔNG dùng `?c=`: Apps Script giữ riêng tham số `c`/`sid`, trả lỗi 400), `claim`; quản trị `admin.login|bootstrap|campaigns.save|campaigns.delete|channels.save|channels.delete|codes.import|codes.removeUnused|claims.list|settings.save|log.list|logout` (lệnh ghi trả kèm `campaigns`).
 - Kiểm thử: `python tests/voucher_ui_test.py` (API giả lập trong file).
